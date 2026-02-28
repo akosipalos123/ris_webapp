@@ -1,0 +1,58 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+.vscode/
+.idea/
+*.swp
+
+# =========================
+# Logs
+# =========================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Env / Secrets  (IMPORTANT)
+# =========================
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# =========================
+# Node / General
+# =========================
+node_modules/
+.npm/
+.cache/
+.pnp/
+.pnp.js
+
+# =========================
+# Build outputs
+# =========================
+dist/
+build/
+coverage/
+.nyc_output/
+
+# =========================
+# Vite / React
+# =========================
+.vite/
+.eslintcache
+
+# =========================
+# Optional (if you generate uploads)
+# =========================
+# uploads/
+# backend/uploads/
+

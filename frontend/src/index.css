@@ -1,0 +1,67 @@
+/* frontend/src/index.css */
+
+@font-face {
+  font-family: "SFUIDisplay-Regular";
+  src: url("./assets/SFUIDisplay-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* default font everywhere */
+html, body {
+  font-family: "SFUIDisplay-Regular", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Arial, sans-serif;
+}
+
+/* make sure inputs/buttons match */
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+/* IMPORTANT: Vite template often sets display:flex + centering */
+body {
+  display: block;
+}
+
+/* IMPORTANT: Vite template often sets max-width + padding */
+#root {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  text-align: initial;
+}
+
+/* ✅ Login-only narrower layout (about 30% less wide) */
+.synapse-auth--narrow .synapse-card {
+  /* If your old card was ~800px, this brings it to ~560px (≈ -30%) */
+  max-width: 560px;
+  width: min(560px, 92vw);
+}
+
+/* ✅ If your “background frame” is a glass panel made with ::before, shrink it too */
+.synapse-auth--narrow::before {
+  /* If your old frame was ~1100px, this brings it to ~770px (≈ -30%) */
+  max-width: 770px;
+  width: min(770px, 96vw);
+}
+
+/* Mobile safety */
+@media (max-width: 520px) {
+  .synapse-auth--narrow .synapse-card {
+    width: 94vw;
+  }
+  .synapse-auth--narrow::before {
+    width: 96vw;
+  }
+}

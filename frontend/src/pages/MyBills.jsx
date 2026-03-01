@@ -48,7 +48,6 @@ function getBillDate(b) {
 }
 
 function getBillProcedure(b) {
-  // Prefer the procedure actually billed (label), fall back to old fields
   return (
     b?.billingLabel ||
     b?.billing?.label ||
@@ -62,7 +61,6 @@ function getBillProcedure(b) {
 }
 
 function getBillAmount(b) {
-  // Prefer explicit totals, else billing amount, else sum items
   if (b?.totalAmount != null) return asNumber(b.totalAmount);
   if (b?.billingAmount != null) return asNumber(b.billingAmount);
   if (b?.billing?.amount != null) return asNumber(b.billing.amount);
@@ -89,6 +87,33 @@ function getReceiptRaw(b) {
     b?.invoicePath ||
     ""
   );
+}
+
+// filename helpers
+function filenameFromContentDisposition(cd) {
+  if (!cd) return "";
+  const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"|filename=([^;]+)/i.exec(cd);
+  const fn = (m?.[1] || m?.[2] || m?.[3] || "").trim();
+  if (!fn) return "";
+  try {
+    return decodeURIComponent(fn.replace(/^UTF-8''/i, ""));
+  } catch {
+    return fn;
+  }
+}
+
+function filenameFromUrl(u, fallback = "receipt") {
+  if (!u) return fallback;
+  try {
+    // URL() needs a base for relative URLs
+    const url = new URL(u, window.location.href);
+    let name = url.pathname.split("/").pop() || fallback;
+    name = decodeURIComponent(name);
+    return name || fallback;
+  } catch {
+    const parts = String(u).split("/");
+    return parts[parts.length - 1] || fallback;
+  }
 }
 
 /* ---------- ICONS (SVG) ---------- */
@@ -177,6 +202,14 @@ const PrintIcon = (p) => (
   </Icon>
 );
 
+const DownloadIcon = (p) => (
+  <Icon {...p}>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <path d="M7 10l5 5 5-5" />
+    <path d="M12 15V3" />
+  </Icon>
+);
+
 export default function MyBills() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -217,10 +250,6 @@ export default function MyBills() {
 
       const data = await apiGet("/api/bills/mine", token);
 
-      // ✅ DEBUG (temporary): see what the API really returns
-      console.log("✅ /api/bills/mine response:", data);
-
-      // ✅ Support common response shapes: [] OR { bills: [] } OR { data: [] } OR { results: [] }
       const list =
         Array.isArray(data) ? data :
         Array.isArray(data?.bills) ? data.bills :
@@ -229,11 +258,6 @@ export default function MyBills() {
         [];
 
       setBills(list);
-
-      // Optional: show message if empty but API returned something unexpected
-      if (!list.length && data && typeof data === "object" && !Array.isArray(data)) {
-        console.warn("⚠️ Unexpected bills response shape:", data);
-      }
     } catch (err) {
       setMsg(err.message || "Failed to load bills");
     } finally {
@@ -279,6 +303,15 @@ export default function MyBills() {
 
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, [receiptOpen]);
+
+  // ✅ When the receipt modal is open, mark the body so @media print can print ONLY the receipt.
+  useEffect(() => {
+    const cls = "receipt-print-open";
+    if (receiptOpen) document.body.classList.add(cls);
+    else document.body.classList.remove(cls);
+
+    return () => document.body.classList.remove(cls);
   }, [receiptOpen]);
 
   function logout() {
@@ -327,39 +360,80 @@ export default function MyBills() {
     };
   }, [selectedBill]);
 
+  // ✅ Ctrl+P behavior, but prints ONLY the receipt
   function printReceipt() {
     if (!receiptUrl) {
-      window.print();
+      setMsg("Receipt file is not available for this bill.");
       return;
     }
 
-    const w = window.open("", "_blank", "noopener,noreferrer,width=980,height=720");
-    if (!w) return;
+    // PDFs: open the PDF itself, then print (receipt-only)
+    if (receiptIsPdf) {
+      const w = window.open(receiptUrl, "_blank", "noopener,noreferrer");
+      if (!w) {
+        setMsg("Popup blocked. Please allow popups then try again.");
+        return;
+      }
 
-    const safeUrl = receiptUrl.replace(/"/g, "&quot;");
-    const html = `<!doctype html>
-<html>
-<head>
-  <title>Receipt</title>
-  <meta charset="utf-8" />
-  <style>
-    html, body { margin: 0; height: 100%; }
-    body { display: flex; align-items: center; justify-content: center; background: #fff; }
-    img { max-width: 100%; max-height: 100%; }
-    iframe { width: 100%; height: 100%; border: 0; }
-  </style>
-</head>
-<body>
-  ${receiptIsPdf ? `<iframe src="${safeUrl}"></iframe>` : `<img src="${safeUrl}" />`}
-  <script>
-    const kick = () => { try { window.focus(); window.print(); } catch(e) {} };
-    setTimeout(kick, 700);
-  </script>
-</body>
-</html>`;
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
+      const kick = () => {
+        try {
+          w.focus();
+          w.print();
+        } catch {}
+      };
+
+      try {
+        w.onload = kick;
+      } catch {}
+      setTimeout(kick, 900);
+      setTimeout(kick, 1600);
+      return;
+    }
+
+    // Images: print current page, but CSS ensures ONLY the receipt print area is visible
+    window.print();
+  }
+
+  // ✅ Download the same file shown in the preview
+  async function downloadReceipt() {
+    if (!receiptUrl) {
+      setMsg("Receipt file is not available for this bill.");
+      return;
+    }
+
+    const fallbackName = `receipt-${selectedBill?._id ? String(selectedBill._id).slice(-8).toUpperCase() : "file"}`;
+    const defaultName = filenameFromUrl(receiptUrl, fallbackName);
+
+    try {
+      const res = await fetch(receiptUrl, { method: "GET" });
+      if (!res.ok) throw new Error("Download failed");
+
+      const cd = res.headers.get("content-disposition");
+      const fromCd = filenameFromContentDisposition(cd);
+      const filename = fromCd || defaultName;
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch {
+      // Fallback: open in a new tab (user can download from browser)
+      const a = document.createElement("a");
+      a.href = receiptUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.download = defaultName; // may be ignored cross-origin, but harmless
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
   }
 
   /* ---------- STYLES ---------- */
@@ -466,7 +540,7 @@ export default function MyBills() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "0 24px 16px", // ✅ no top white space
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
@@ -476,7 +550,7 @@ export default function MyBills() {
 
   const topbar = {
     height: 84,
-    borderRadius: "0 0 22px 22px", // ✅ flush to top
+    borderRadius: "0 0 22px 22px",
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",
@@ -601,7 +675,14 @@ export default function MyBills() {
     flexDirection: "column",
   };
 
-  const panelTop = { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, padding: "0 8px 8px", flex: "0 0 auto" };
+  const panelTop = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 10,
+    padding: "0 8px 8px",
+    flex: "0 0 auto",
+  };
 
   const refreshBtn = (disabled) => ({
     background: "#fff",
@@ -729,9 +810,15 @@ export default function MyBills() {
 
   const previewImg = { width: "100%", height: "100%", objectFit: "contain" };
 
-  const modalFooter = { display: "flex", alignItems: "center", justifyContent: "flex-start", padding: "0 8px 4px" };
+  const modalFooter = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 10,
+    padding: "0 8px 4px",
+  };
 
-  const printBtn = {
+  const actionBtnLight = (disabled) => ({
     display: "inline-flex",
     alignItems: "center",
     gap: 8,
@@ -741,8 +828,9 @@ export default function MyBills() {
     color: "#0f172a",
     border: "2px solid rgba(0,0,0,.15)",
     fontWeight: 900,
-    cursor: "pointer",
-  };
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+  });
 
   /* ---------- SIDEBAR ITEMS (PATIENT ONLY) ---------- */
   const SIDE_ITEMS = [
@@ -760,6 +848,43 @@ export default function MyBills() {
 
   return (
     <div style={shell}>
+      {/* Print CSS: when receipt modal is open, print ONLY the receipt preview */}
+      <style>{`
+        @media print {
+          body.receipt-print-open * {
+            visibility: hidden !important;
+          }
+
+          body.receipt-print-open #receipt-print-area,
+          body.receipt-print-open #receipt-print-area * {
+            visibility: visible !important;
+          }
+
+          body.receipt-print-open #receipt-print-area {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            background: #fff !important;
+            overflow: hidden !important;
+          }
+
+          body.receipt-print-open #receipt-print-area iframe,
+          body.receipt-print-open #receipt-print-area img {
+            width: 100% !important;
+            height: 100% !important;
+            border: 0 !important;
+            display: block !important;
+          }
+
+          @page { margin: 0; }
+        }
+      `}</style>
+
       {/* LEFT SIDEBAR */}
       <aside style={sidebar}>
         <div style={sideHeader}>
@@ -970,7 +1095,8 @@ export default function MyBills() {
             ) : null}
 
             <div style={previewOuter}>
-              <div style={previewInner}>
+              {/* ✅ This is the ONLY thing that will print when the modal is open */}
+              <div style={previewInner} id="receipt-print-area">
                 {receiptUrl ? (
                   receiptIsPdf ? (
                     <iframe title="Receipt PDF" src={receiptUrl} style={{ width: "100%", height: "100%", border: 0 }} />
@@ -984,9 +1110,14 @@ export default function MyBills() {
             </div>
 
             <div style={modalFooter}>
-              <button type="button" style={printBtn} onClick={printReceipt}>
+              <button type="button" style={actionBtnLight(!receiptUrl)} onClick={printReceipt} disabled={!receiptUrl}>
                 <PrintIcon size={18} />
-                Print Receipt
+                Print
+              </button>
+
+              <button type="button" style={actionBtnLight(!receiptUrl)} onClick={downloadReceipt} disabled={!receiptUrl}>
+                <DownloadIcon size={18} />
+                Download
               </button>
             </div>
           </div>

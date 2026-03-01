@@ -17,12 +17,8 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(false);
 
-  // background url from backend
-  const [bgUrl, setBgUrl] = useState("");
-
-  // ✅ fallback so background never disappears
-  const FALLBACK_BG =
-    "https://res.cloudinary.com/<YOUR_CLOUD_NAME>/image/upload/f_auto,q_auto,w_1920/background_azdowt.png";
+  // ✅ Local background served by Vite from /frontend/public/images/background.png
+  const LOCAL_BG = `${import.meta.env.BASE_URL}images/background.png`;
 
   const sanitizedEmail = useMemo(
     () => form.email.trim().toLowerCase(),
@@ -34,26 +30,6 @@ export default function Login() {
     const token = localStorage.getItem("token");
     if (token) nav("/profile");
   }, [nav]);
-
-  // fetch public config (login background)
-  useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      try {
-        const res = await fetch("/api/config/public");
-        if (!res.ok) return;
-        const data = await res.json();
-        if (mounted && data?.loginBgUrl) setBgUrl(data.loginBgUrl);
-      } catch {
-        // ignore - fallback will be used
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   function onChange(e) {
     const { name, value } = e.target;
@@ -82,8 +58,6 @@ export default function Login() {
         return;
       }
 
-      // ✅ Step 1: Verify credentials + send OTP
-      // Expect: { otpToken, message }
       const data = await apiPost("/api/auth/login-otp", {
         email: sanitizedEmail,
         password: form.password,
@@ -121,8 +95,6 @@ export default function Login() {
         return;
       }
 
-      // ✅ Step 2: Verify OTP → return token
-      // Expect: { token }
       const data = await apiPost("/api/auth/login", {
         otpToken,
         otp: otpClean,
@@ -144,7 +116,6 @@ export default function Login() {
 
   async function onSubmit(e) {
     e.preventDefault();
-    // If OTP not sent yet, submit = request OTP; otherwise submit = verify OTP + login
     if (!otpSent) return requestOtp();
     return verifyOtpAndLogin();
   }
@@ -152,7 +123,7 @@ export default function Login() {
   return (
     <div
       className="synapse-auth synapse-auth--narrow"
-      style={{ backgroundImage: `url("${bgUrl || FALLBACK_BG}")` }}
+      style={{ backgroundImage: `url(${LOCAL_BG})` }}
     >
       {/* Brand at top */}
       <div className="synapse-brand top">
@@ -201,7 +172,6 @@ export default function Login() {
             disabled={loading || otpSent}
           />
 
-          {/* ✅ OTP Field (only after OTP is sent) */}
           {otpSent ? (
             <>
               <label className="synapse-label mt-3" htmlFor="otp">

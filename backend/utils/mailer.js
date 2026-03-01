@@ -1,18 +1,31 @@
 // backend/utils/mailer.js
 const nodemailer = require("nodemailer");
 
+const host = process.env.SMTP_HOST;
+const port = Number(process.env.SMTP_PORT || 587);
+const user = process.env.SMTP_USER;
+const pass = process.env.SMTP_PASS;
+
+if (!host || !user || !pass) {
+  console.warn(
+    "[mailer] Missing env vars. Need SMTP_HOST, SMTP_USER, SMTP_PASS (and optionally SMTP_PORT)."
+  );
+}
+
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: false, // true for 465, false for 587
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+  host,
+  port,
+  secure: port === 465, // ✅ true for 465 (SSL), false for 587 (STARTTLS)
+  auth: { user, pass },
+
+  // ✅ fail faster (helps with timeouts)
+  connectionTimeout: 20000,
+  greetingTimeout: 20000,
+  socketTimeout: 20000,
 });
 
 async function sendOtpEmail(to, otp) {
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
+  const from = process.env.MAIL_FROM || user;
 
   await transporter.sendMail({
     from,

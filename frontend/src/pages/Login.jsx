@@ -17,19 +17,41 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(false);
 
-  // ✅ Local background served by Vite from /frontend/public/images/background.png
-  const LOCAL_BG = `${import.meta.env.BASE_URL}images/background.png`;
+  // ✅ background url from backend (same as Register.jsx)
+  const [bgUrl, setBgUrl] = useState("");
 
   const sanitizedEmail = useMemo(
     () => form.email.trim().toLowerCase(),
     [form.email]
   );
 
+  // ✅ fallback bg (LOCAL, served by Vite public folder)
+  // Put file at: frontend/public/images/background.png
+  const FALLBACK_BG = `${import.meta.env.BASE_URL}images/background.png`;
+
   // if already logged in
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (token) nav("/profile");
   }, [nav]);
+
+  // ✅ fetch public config (login background) — same as Register.jsx
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/config/public");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (mounted && data?.loginBgUrl) setBgUrl(data.loginBgUrl);
+      } catch {}
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   function onChange(e) {
     const { name, value } = e.target;
@@ -58,6 +80,7 @@ export default function Login() {
         return;
       }
 
+      // ✅ Step 1: Verify credentials + send OTP
       const data = await apiPost("/api/auth/login-otp", {
         email: sanitizedEmail,
         password: form.password,
@@ -95,6 +118,7 @@ export default function Login() {
         return;
       }
 
+      // ✅ Step 2: Verify OTP → return token
       const data = await apiPost("/api/auth/login", {
         otpToken,
         otp: otpClean,
@@ -122,8 +146,8 @@ export default function Login() {
 
   return (
     <div
-      className="synapse-auth synapse-auth--narrow"
-      style={{ backgroundImage: `url(${LOCAL_BG})` }}
+      className="synapse-auth"
+      style={{ backgroundImage: `url("${bgUrl || FALLBACK_BG}")` }}
     >
       {/* Brand at top */}
       <div className="synapse-brand top">
@@ -135,7 +159,7 @@ export default function Login() {
         <div className="synapse-brand-name">AXIS</div>
       </div>
 
-      <div className="synapse-card">
+      <div className="synapse-card synapse-card--login">
         <h1 className="synapse-title">Welcome!</h1>
         <div className="synapse-subtitle">Sign in to your account</div>
 
@@ -155,6 +179,7 @@ export default function Login() {
             onChange={onChange}
             required
             disabled={loading || otpSent}
+            autoComplete="email"
           />
 
           <label className="synapse-label mt-3" htmlFor="password">
@@ -170,8 +195,10 @@ export default function Login() {
             onChange={onChange}
             required
             disabled={loading || otpSent}
+            autoComplete="current-password"
           />
 
+          {/* ✅ OTP Field (only after OTP is sent) */}
           {otpSent ? (
             <>
               <label className="synapse-label mt-3" htmlFor="otp">
@@ -206,13 +233,12 @@ export default function Login() {
                   type="button"
                   onClick={requestOtp}
                   disabled={loading}
+                  className="synapse-btn synapse-btn-mini"
                   style={{
+                    width: 92,
                     height: 46,
-                    border: "2px solid #0b3d2e",
-                    background: "#0b3d2e",
-                    color: "#fff",
-                    fontWeight: 800,
-                    cursor: "pointer",
+                    marginTop: 0,
+                    borderRadius: "0 12px 12px 0",
                   }}
                 >
                   Resend
@@ -228,7 +254,7 @@ export default function Login() {
                 className="synapse-btn synapse-btn-mini"
                 onClick={resetOtpFlow}
                 disabled={loading}
-                style={{ marginTop: 8, alignSelf: "flex-start" }}
+                style={{ marginTop: 10, width: "fit-content" }}
               >
                 Change email/password
               </button>

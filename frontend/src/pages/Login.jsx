@@ -17,7 +17,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [keepSignedIn, setKeepSignedIn] = useState(false);
 
-  // ✅ background url from backend (same as Register.jsx)
+  // background url from backend (same pattern as Register.jsx)
   const [bgUrl, setBgUrl] = useState("");
 
   const sanitizedEmail = useMemo(
@@ -25,7 +25,7 @@ export default function Login() {
     [form.email]
   );
 
-  // ✅ fallback bg (LOCAL, served by Vite public folder)
+  // ✅ local fallback bg (Vite public)
   // Put file at: frontend/public/images/background.png
   const FALLBACK_BG = `${import.meta.env.BASE_URL}images/background.png`;
 
@@ -35,7 +35,7 @@ export default function Login() {
     if (token) nav("/profile");
   }, [nav]);
 
-  // ✅ fetch public config (login background) — same as Register.jsx
+  // fetch public config (login background) — same as Register.jsx
   useEffect(() => {
     let mounted = true;
 
@@ -205,13 +205,7 @@ export default function Login() {
                 One-Time Password (OTP)
               </label>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 92px",
-                  gap: 0,
-                }}
-              >
+              <div className="synapse-otp-row">
                 <input
                   id="otp"
                   name="otp"
@@ -233,12 +227,15 @@ export default function Login() {
                   type="button"
                   onClick={requestOtp}
                   disabled={loading}
-                  className="synapse-btn synapse-btn-mini"
                   style={{
-                    width: 92,
+                    width: "100%",
                     height: 46,
-                    marginTop: 0,
-                    borderRadius: "0 12px 12px 0",
+                    border: "2px solid #0b3d2e",
+                    background: "#0b3d2e",
+                    color: "#fff",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    borderRadius: 0,
                   }}
                 >
                   Resend
@@ -254,7 +251,7 @@ export default function Login() {
                 className="synapse-btn synapse-btn-mini"
                 onClick={resetOtpFlow}
                 disabled={loading}
-                style={{ marginTop: 10, width: "fit-content" }}
+                style={{ marginTop: 8, alignSelf: "flex-start" }}
               >
                 Change email/password
               </button>

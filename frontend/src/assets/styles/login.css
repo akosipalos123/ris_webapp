@@ -1,12 +1,17 @@
-/* login.css — tuned to match your screenshot */
+/* login.css — tuned to match your screenshot + responsive */
 
+/* base container */
 .synapse-auth {
   min-height: 100vh;
+  min-height: 100svh; /* better on mobile browsers */
   position: relative;
   display: grid;
   place-items: center;
   padding: 56px 16px 140px;
-  overflow: hidden;
+
+  /* allow scroll on small screens */
+  overflow-x: hidden;
+  overflow-y: auto;
 
   /* DO NOT set background-image here */
   background-size: cover;
@@ -14,70 +19,95 @@
   background-repeat: no-repeat;
 }
 
+/* make sizing predictable */
+.synapse-auth * {
+  box-sizing: border-box;
+}
 
 /* warm gradient overlay like screenshot */
 /* make gradient dominate the whole background */
-.synapse-auth::before{
-  content:"";
-  position:absolute;
-  inset:0;
-  pointer-events:none;
+.synapse-auth::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 
   background: linear-gradient(
     180deg,
     rgba(255, 220, 150, 0.65) 0%,
-    rgba(245, 170, 105, 0.70) 55%,
-    rgba(240, 145, 70, 0.80) 100%
+    rgba(245, 170, 105, 0.7) 55%,
+    rgba(240, 145, 70, 0.8) 100%
   );
 }
 
 /* center “glass” card */
-.synapse-card{
+.synapse-card {
   position: relative;
   z-index: 1;
 
-  width: min(760px, 94vw); /* screenshot card is wider */
+  width: min(760px, 94vw); /* register wide */
   padding: 40px 64px 34px;
   border-radius: 34px;
 
-  background: rgba(255,255,255,0.58);
+  background: rgba(255, 255, 255, 0.58);
   backdrop-filter: blur(6px);
 
-  box-shadow: 0 18px 45px rgba(0,0,0,0.18);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.18);
 }
 
-/* Login card 30% narrower than 760px (760 * 0.70 = 532px) */
+/* login card 30% narrower */
 .synapse-card--login {
   width: min(532px, 94vw);
 }
 
-/* “Synapse” brand at top center (optional — keep if you want it inside the card) */
-.synapse-brand{
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  gap:6px;
+/* --- layout helpers for register/login --- */
+.synapse-grid-2 {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.synapse-col {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.synapse-otp-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 92px;
+  gap: 0;
+}
+
+/* “Synapse” brand at top center */
+.synapse-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 4px;
 }
 
-.synapse-brand-mark{
-  display:flex;
-  gap:6px;
-  opacity:.85;
+.synapse-brand-mark {
+  display: flex;
+  gap: 6px;
+  opacity: 0.85;
 }
-.synapse-brand-mark .dot{
+.synapse-brand-mark .dot {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background:#0b3d2e;
+  background: #0b3d2e;
 }
-.synapse-brand-name{
-  font-weight:600;
-  letter-spacing:.4px;
-  color: rgba(0,0,0,.70);
+.synapse-brand-name {
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: rgba(0, 0, 0, 0.7);
 }
 
-.synapse-brand.top{
+.synapse-brand.top {
   position: absolute;
   top: 26px;
   left: 50%;
@@ -86,30 +116,28 @@
   margin: 0;
 }
 
-
-
 /* title + subtitle */
-.synapse-title{
-  text-align:center;
+.synapse-title {
+  text-align: center;
   font-weight: 900;
-  font-size: 56px; /* closer to screenshot */
+  font-size: 56px;
   line-height: 1;
   margin: 10px 0 6px;
-  color:#0a0a0a;
+  color: #0a0a0a;
 }
 
-.synapse-subtitle{
-  text-align:center;
+.synapse-subtitle {
+  text-align: center;
   font-size: 14px;
-  color: rgba(0,0,0,.60);
+  color: rgba(0, 0, 0, 0.6);
   margin-bottom: 22px;
 }
 
 /* alert */
-.synapse-alert{
-  border: 1px solid rgba(11,61,46,.22);
-  background: rgba(255,255,255,.45);
-  color:#0b3d2e;
+.synapse-alert {
+  border: 1px solid rgba(11, 61, 46, 0.22);
+  background: rgba(255, 255, 255, 0.45);
+  color: #0b3d2e;
   padding: 10px 12px;
   border-radius: 12px;
   margin: 0 auto 14px;
@@ -118,92 +146,94 @@
 }
 
 /* form layout */
-.synapse-form{
-  display:flex;
-  flex-direction:column;
-  max-width: 560px; /* inputs not full-card width */
+.synapse-form {
+  display: flex;
+  flex-direction: column;
+  max-width: 560px;
   margin: 0 auto;
 }
 
-.synapse-label{
+.synapse-label {
   font-weight: 800;
-  font-size: 18px; /* screenshot label looks bigger */
-  color:#111;
+  font-size: 18px;
+  color: #111;
   margin: 10px 0 8px;
 }
 
-.synapse-input{
+.synapse-input {
   height: 46px;
-  border-radius: 0; /* squared */
+  border-radius: 0;
   border: 2px solid #0b3d2e;
   padding: 10px 12px;
   font-size: 14px;
   outline: none;
 
-  background: rgba(255,255,255,.22);
+  background: rgba(255, 255, 255, 0.22);
 }
 
-.synapse-input::placeholder{
-  color: rgba(0,0,0,.35);
+.synapse-input::placeholder {
+  color: rgba(0, 0, 0, 0.35);
 }
 
-.synapse-row{
-  display:flex;
+.synapse-row {
+  display: flex;
   justify-content: space-between;
-  align-items:center;
+  align-items: center;
   margin: 10px 0 14px;
   gap: 16px;
 }
 
-.synapse-check{
-  display:inline-flex;
-  align-items:center;
+.synapse-check {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: rgba(0,0,0,.55);
-  user-select:none;
+  color: rgba(0, 0, 0, 0.55);
+  user-select: none;
 }
-.synapse-check input{
+.synapse-check input {
   width: 13px;
   height: 13px;
-  accent-color:#0b3d2e;
+  accent-color: #0b3d2e;
 }
 
-.synapse-link{
+.synapse-link {
   font-size: 12px;
-  color: rgba(0,0,0,.60);
-  text-decoration:none;
+  color: rgba(0, 0, 0, 0.6);
+  text-decoration: none;
 }
-.synapse-link:hover{ text-decoration: underline; }
+.synapse-link:hover {
+  text-decoration: underline;
+}
 
-/* pill sign in button */
-.synapse-btn{
+/* pill button */
+.synapse-btn {
   height: 44px;
   border: none;
   border-radius: 999px;
-  background:#0b3d2e;
-  color:#fff;
+  background: #0b3d2e;
+  color: #fff;
   font-weight: 800;
   font-size: 16px;
-  cursor:pointer;
+  cursor: pointer;
 }
 
-.synapse-btn:disabled{
-  opacity:.75;
-  cursor:not-allowed;
+.synapse-btn:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 
-.synapse-btn.secondary{
+.synapse-btn.secondary {
   margin-top: 10px;
-  background: rgba(11,61,46,.12);
-  color:#0b3d2e;
-  border: 1px solid rgba(11,61,46,.30);
+  background: rgba(11, 61, 46, 0.12);
+  color: #0b3d2e;
+  border: 1px solid rgba(11, 61, 46, 0.3);
 }
 
-.synapse-btn.linklike{
+.synapse-btn.linklike {
   margin-top: 6px;
   background: transparent;
-  color: rgba(0,0,0,.60);
+  color: rgba(0, 0, 0, 0.6);
   border: none;
   height: auto;
   padding: 10px 0 0;
@@ -211,102 +241,186 @@
   font-weight: 700;
 }
 
-.synapse-help{
+.synapse-help {
   font-size: 12px;
-  color: rgba(0,0,0,.55);
+  color: rgba(0, 0, 0, 0.55);
   margin: 8px 0 14px;
 }
 
-/* divider line + centered "or" */
-.synapse-divider{
-  position:relative;
-  text-align:center;
+/* divider */
+.synapse-divider {
+  position: relative;
+  text-align: center;
   margin: 14px 0 10px;
 }
-.synapse-divider::before{
-  content:"";
-  position:absolute;
-  left:0;
-  right:0;
-  top:50%;
-  height:1px;
-  background: rgba(0,0,0,.22);
+.synapse-divider::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.22);
 }
-.synapse-divider span{
-  position:relative;
+.synapse-divider span {
+  position: relative;
   padding: 0 14px;
-  background: rgba(255,255,255,.58);
-  color: rgba(0,0,0,.50);
+  background: rgba(255, 255, 255, 0.58);
+  color: rgba(0, 0, 0, 0.5);
   font-size: 12px;
 }
 
 /* social buttons */
-.synapse-social{
-  display:flex;
-  justify-content:center;
+.synapse-social {
+  display: flex;
+  justify-content: center;
   gap: 16px;
   margin: 10px 0 18px;
 }
-.synapse-social-btn{
+.synapse-social-btn {
   width: 36px;
   height: 36px;
   border-radius: 999px;
   border: none;
-  background: transparent; /* screenshot is just the icon circles */
-  display:grid;
-  place-items:center;
-  cursor:pointer;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
 }
-.synapse-social-btn .g{
+.synapse-social-btn .g {
   width: 30px;
   height: 30px;
   border-radius: 999px;
   background: #fff;
-  display:grid;
-  place-items:center;
+  display: grid;
+  place-items: center;
   font-weight: 900;
 }
-.synapse-social-btn .f{
+.synapse-social-btn .f {
   width: 30px;
   height: 30px;
   border-radius: 999px;
   background: #1877f2;
-  color:#fff;
-  display:grid;
-  place-items:center;
+  color: #fff;
+  display: grid;
+  place-items: center;
   font-weight: 900;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
 /* bottom register line */
-.synapse-bottom{
-  text-align:center;
+.synapse-bottom {
+  text-align: center;
   font-size: 14px;
-  color: rgba(0,0,0,.60);
+  color: rgba(0, 0, 0, 0.6);
 }
-.synapse-bottom .synapse-link{
-  color:#0b3d2e;
+.synapse-bottom .synapse-link {
+  color: #0b3d2e;
   font-weight: 800;
 }
 
 /* footer */
-.synapse-footer{
-  position:absolute;
-  left:0;
-  right:0;
+.synapse-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
   bottom: 16px;
-  z-index:1;
-  text-align:center;
-  color: rgba(0,0,0,.55);
+  z-index: 1;
+  text-align: center;
+  color: rgba(0, 0, 0, 0.55);
   font-size: 12px;
   padding: 0 12px;
 }
 
-.synapse-footer-icons{
+.synapse-footer-icons {
   margin-top: 10px;
-  display:flex;
-  flex-wrap:wrap;
-  justify-content:center;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
 }
-.synapse-footer-icons .sep{ opacity:.5; }
+.synapse-footer-icons .sep {
+  opacity: 0.5;
+}
+
+/* ---------------- Responsive ---------------- */
+
+/* Tablets */
+@media (max-width: 768px) {
+  .synapse-auth {
+    padding: 64px 12px 24px;
+    place-items: start center; /* allow scroll */
+  }
+
+  .synapse-brand.top {
+    top: 18px;
+  }
+
+  .synapse-card {
+    padding: 28px 24px 24px;
+    border-radius: 28px;
+  }
+
+  .synapse-title {
+    font-size: 44px;
+  }
+
+  .synapse-label {
+    font-size: 16px;
+  }
+
+  .synapse-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .synapse-grid-2 {
+    grid-template-columns: 1fr; /* stack fields */
+    gap: 12px;
+  }
+
+  .synapse-footer {
+    position: static; /* don’t overlap content */
+    margin-top: 18px;
+    padding-bottom: 18px;
+  }
+}
+
+/* Phones */
+@media (max-width: 480px) {
+  .synapse-card {
+    padding: 22px 16px 18px;
+    border-radius: 22px;
+    width: 94vw;
+  }
+
+  .synapse-card--login {
+    width: 94vw; /* override narrow on phones */
+  }
+
+  .synapse-title {
+    font-size: 34px;
+  }
+
+  .synapse-otp-row {
+    grid-template-columns: 1fr 78px; /* smaller button */
+  }
+
+  .synapse-footer-icons {
+    gap: 6px;
+  }
+}
+
+/* Short screens (landscape phones) */
+@media (max-height: 700px) {
+  .synapse-auth {
+    place-items: start center;
+    padding-bottom: 24px;
+  }
+
+  .synapse-footer {
+    position: static;
+    margin-top: 16px;
+  }
+}

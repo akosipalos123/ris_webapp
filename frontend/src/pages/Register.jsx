@@ -24,9 +24,9 @@ export default function Register() {
 
   const emailClean = useMemo(() => form.email.trim().toLowerCase(), [form.email]);
 
-  // fallback bg (replace cloud name)
-  const FALLBACK_BG =
-    "https://res.cloudinary.com/<YOUR_CLOUD_NAME>/image/upload/f_auto,q_auto,w_1920/background_azdowt.png";
+  // ✅ local fallback bg (Vite public)
+  // Put file at: frontend/public/images/background.png
+  const FALLBACK_BG = `${import.meta.env.BASE_URL}images/background.png`;
 
   useEffect(() => {
     let mounted = true;
@@ -52,9 +52,6 @@ export default function Register() {
 
   function onChange(e) {
     const { name, value } = e.target;
-
-    // If user edits email before OTP sent, normal update
-    // If OTP already sent, keep email locked (we disable input anyway)
     setForm((p) => ({ ...p, [name]: value }));
     setMsg("");
   }
@@ -143,20 +140,6 @@ export default function Register() {
     }
   }
 
-  // layout helpers (fixes the screenshot issue)
-  const row2 = {
-    width: "100%",
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 24,
-  };
-
-  const col = {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-  };
-
   return (
     <div
       className="synapse-auth"
@@ -182,8 +165,8 @@ export default function Register() {
 
         <form onSubmit={onSubmit} className="synapse-form" style={{ width: "100%" }}>
           {/* Row: First / Last */}
-          <div style={row2}>
-            <div style={col}>
+          <div className="synapse-grid-2">
+            <div className="synapse-col">
               <label className="synapse-label" htmlFor="firstName">
                 First Name
               </label>
@@ -201,7 +184,7 @@ export default function Register() {
               />
             </div>
 
-            <div style={col}>
+            <div className="synapse-col">
               <label className="synapse-label" htmlFor="lastName">
                 Last Name
               </label>
@@ -221,14 +204,14 @@ export default function Register() {
           </div>
 
           {/* Row: Email + OTP */}
-          <div style={{ ...row2, marginTop: 12 }}>
+          <div className="synapse-grid-2" style={{ marginTop: 12 }}>
             {/* Email + Send */}
-            <div style={col}>
+            <div className="synapse-col">
               <label className="synapse-label" htmlFor="email">
                 Email Address
               </label>
 
-              <div style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr 92px", gap: 0 }}>
+              <div className="synapse-otp-row">
                 <input
                   id="email"
                   name="email"
@@ -237,7 +220,7 @@ export default function Register() {
                   placeholder="Enter your email address"
                   value={form.email}
                   onChange={onChange}
-                  disabled={loading || otpSent} // ✅ lock after OTP sent
+                  disabled={loading || otpSent}
                   required
                   autoComplete="email"
                   style={{
@@ -253,7 +236,7 @@ export default function Register() {
                   disabled={loading || !emailClean}
                   className="synapse-btn synapse-btn-mini"
                   style={{
-                    width: 92,
+                    width: "100%",
                     height: 46,
                     marginTop: 0,
                     borderRadius: "0 12px 12px 0",
@@ -263,7 +246,6 @@ export default function Register() {
                 </button>
               </div>
 
-              {/* ✅ show reset option only after OTP sent */}
               {otpSent ? (
                 <button
                   type="button"
@@ -278,7 +260,7 @@ export default function Register() {
             </div>
 
             {/* OTP */}
-            <div style={col}>
+            <div className="synapse-col">
               <label className="synapse-label" htmlFor="otp">
                 One-Time Password (OTP)
               </label>
@@ -293,7 +275,7 @@ export default function Register() {
                   setOtp(v);
                   setMsg("");
                 }}
-                disabled={loading || !otpSent} // ✅ disabled until OTP sent
+                disabled={loading || !otpSent}
                 inputMode="numeric"
                 autoComplete="one-time-code"
               />

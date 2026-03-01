@@ -226,7 +226,6 @@ export default function Profile() {
   }, [profile]);
 
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
-  // Adjust this based on what your /api/auth/me returns:
   const isAdmin = profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
 
   /* ---------- SIDEBAR ITEMS ---------- */
@@ -238,11 +237,10 @@ export default function Profile() {
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
-  // ✅ aligned with your current App.jsx routes
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon }, // keep if admin uses same booking page
+    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
     { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
@@ -363,19 +361,19 @@ export default function Profile() {
 
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
-  // ✅ compact main layout
+  // ✅ UPDATED: remove top padding so topbar touches top
   const main = {
-    padding: "16px 24px 16px",
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
   };
 
-  // ✅ shorter topbar + smaller spacing
+  // ✅ UPDATED: topbar has no top rounding, only bottom rounding
   const topbar = {
     height: 84,
-    borderRadius: 22,
+    borderRadius: "0 0 22px 22px",
     background: "linear-gradient(90deg, #0b3d2e 0%, #1f5f45 100%)",
     color: "#fff",
     padding: "16px 22px",
@@ -411,11 +409,9 @@ export default function Profile() {
     display: "block",
   };
 
-  // ✅ tighter typography
   const sectionTitle = { fontSize: 24, fontWeight: 900, margin: "10px 0 0", color: "#0f172a", lineHeight: 1.05 };
   const sectionSub = { margin: "4px 0 0", color: "#334155", fontSize: 13, fontWeight: 700 };
 
-  // ✅ smaller pills
   const pillsRow = { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 8 };
 
   const pill = {
@@ -432,7 +428,6 @@ export default function Profile() {
   const pillLabel = { fontSize: 12, color: "#0f172a", fontWeight: 800 };
   const pillValue = { fontSize: 18, fontWeight: 900, color: DARK, letterSpacing: 0.5 };
 
-  // ✅ less spacing between columns
   const panels = {
     display: "grid",
     gridTemplateColumns: "2fr 1fr",
@@ -442,7 +437,6 @@ export default function Profile() {
     overflow: "hidden",
   };
 
-  // ✅ shorter panels
   const panel = {
     borderRadius: 28,
     border: `3px solid ${DARK}`,
@@ -612,7 +606,6 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Patient ID + Avatar Dropdown */}
           <div style={rightTop} ref={menuRef}>
             <div style={patientIdWrap}>
               <div style={patientIdLabel}>Patient ID</div>
@@ -667,7 +660,6 @@ export default function Profile() {
           <div style={{ color: "#64748b" }}>No profile found.</div>
         ) : (
           <>
-            {/* APPOINTMENTS */}
             <div style={sectionTitle}>Appointments</div>
             <p style={sectionSub}>Review the status of your appointments</p>
 
@@ -690,9 +682,7 @@ export default function Profile() {
               </div>
             </div>
 
-            {/* PANELS */}
             <div style={panels}>
-              {/* Patient Information */}
               <div style={{ overflow: "hidden" }}>
                 <div style={sectionTitle}>Patient Information</div>
                 <p style={sectionSub}>Details from your account profile</p>
@@ -751,7 +741,6 @@ export default function Profile() {
                 </div>
               </div>
 
-              {/* Updates */}
               <div style={{ overflow: "hidden" }}>
                 <div style={sectionTitle}>Updates</div>
                 <p style={sectionSub}>Shows your most recent account changes</p>

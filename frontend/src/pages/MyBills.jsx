@@ -466,16 +466,17 @@ export default function MyBills() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "16px 24px 16px",
+    padding: "0 24px 16px", // ✅ no top white space
     height: "100vh",
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
+    position: "relative",
   };
 
   const topbar = {
     height: 84,
-    borderRadius: 22,
+    borderRadius: "0 0 22px 22px", // ✅ flush to top
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",

@@ -220,7 +220,7 @@ export default function Login() {
       <div className="synapse-card synapse-card--login">
         <h1 className="synapse-title">Welcome!</h1>
         <div className="synapse-subtitle">
-          Sign in to your account (Admins sign in directly; Patients receive OTP)
+          Sign in to your account.
         </div>
 
         {msg ? <div className="synapse-alert">{msg}</div> : null}

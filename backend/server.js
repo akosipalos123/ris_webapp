@@ -15,26 +15,43 @@ const configRoutes = require("./routes/configRoutes");
 // ✅ Admin auth + invite + admin user management routes
 const adminAuthRoutes = require("./routes/adminAuth");
 const adminInvitesRoutes = require("./routes/adminInvites");
-const adminUsersRoutes = require("./routes/adminUsers"); // ✅ superadmin: manage admins
+const adminUsersRoutes = require("./routes/adminUsers");
 
 const app = express();
 
+/**
+ * ✅ CORS
+ * FRONTEND_URL supports comma-separated values:
+ * FRONTEND_URL=https://axis-bsrt.slsu.com,https://www.axis-bsrt.slsu.com
+ */
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
+  ...(process.env.FRONTEND_URL ? String(process.env.FRONTEND_URL).split(",") : []),
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-].filter(Boolean);
+]
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked origin: ${origin}`));
-    },
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: (origin, cb) => {
+    // allow curl/postman / server-to-server
+    if (!origin) return cb(null, true);
+
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+
+    // ✅ IMPORTANT: do NOT throw (throwing can cause OPTIONS to become 500)
+    return cb(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+
+// ✅ IMPORTANT: Express/router in your setup does NOT accept "*".
+// Use regex instead to handle ALL preflights safely.
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
@@ -58,6 +75,7 @@ app.use("/api/admin/users", adminUsersRoutes);
 // ✅ Existing admin APIs (appointments/billing/etc)
 app.use("/api/admin", adminRoutes);
 
+// ✅ centralized error handler
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ message: "Server error", error: err?.message });

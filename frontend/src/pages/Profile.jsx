@@ -3,6 +3,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+/* ✅ ONLY THESE EMAILS SEE "SUPER ADMIN PANEL" */
+const SUPER_ADMIN_EMAILS = new Set([
+  "rondelserrano1@gmail.com",
+  "cambsrt.slsu@gmail.com",
+]);
+
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
   return (
@@ -114,6 +120,13 @@ const AdminInfoIcon = (p) => (
   </Icon>
 );
 
+const SuperAdminIcon = (p) => (
+  <Icon {...p}>
+    <path d="M12 2l8 4v6c0 5-3.2 9.6-8 10-4.8-.4-8-5-8-10V6l8-4z" />
+    <path d="M9 12l2 2 4-4" />
+  </Icon>
+);
+
 /* ---------- HELPERS ---------- */
 function ageFromBirthdate(birthdate) {
   if (!birthdate) return "-";
@@ -146,7 +159,13 @@ export default function Profile() {
 
     (async () => {
       const token = localStorage.getItem("token");
-      if (!token) return nav("/login");
+
+      // If no patient token, redirect appropriately
+      if (!token) {
+        const adminToken = localStorage.getItem("adminToken");
+        if (adminToken) return nav("/admin");
+        return nav("/login");
+      }
 
       try {
         setMsg("");
@@ -194,7 +213,11 @@ export default function Profile() {
 
   function logout() {
     setMenuOpen(false);
+    // Clear both (prevents mixed sessions)
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
+    localStorage.removeItem("adminEmail");
     nav("/login");
   }
 
@@ -228,6 +251,10 @@ export default function Profile() {
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
   const isAdmin = profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
 
+  // ✅ Button is only visible if ADMIN AND email is in allow-list (2 emails)
+  const emailClean = useMemo(() => String(profile?.email || "").trim().toLowerCase(), [profile]);
+  const canSeeSuperAdminPanel = isAdmin && SUPER_ADMIN_EMAILS.has(emailClean);
+
   /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
@@ -242,6 +269,9 @@ export default function Profile() {
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
     { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
+    ...(canSeeSuperAdminPanel
+      ? [{ label: "Super Admin Panel", to: "/admin/super", IconComp: SuperAdminIcon, exact: true }]
+      : []),
     { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
 
@@ -361,7 +391,6 @@ export default function Profile() {
 
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
-  // ✅ UPDATED: remove top padding so topbar touches top
   const main = {
     padding: "0 24px 16px",
     height: "100vh",
@@ -370,7 +399,6 @@ export default function Profile() {
     flexDirection: "column",
   };
 
-  // ✅ UPDATED: topbar has no top rounding, only bottom rounding
   const topbar = {
     height: 84,
     borderRadius: "0 0 22px 22px",
@@ -459,6 +487,8 @@ export default function Profile() {
 
   const rightTop = { display: "flex", alignItems: "center", gap: 12, position: "relative" };
   const patientIdWrap = { textAlign: "right", lineHeight: 1.1 };
+
+  const idLabelText = isAdmin ? (canSeeSuperAdminPanel ? "Superadmin ID" : "Admin ID") : "Patient ID";
   const patientIdLabel = { fontSize: 14, fontWeight: 800 };
   const patientIdValue = { fontSize: 12, opacity: 0.9 };
 
@@ -608,7 +638,7 @@ export default function Profile() {
 
           <div style={rightTop} ref={menuRef}>
             <div style={patientIdWrap}>
-              <div style={patientIdLabel}>Patient ID</div>
+              <div style={patientIdLabel}>{idLabelText}</div>
               <div style={patientIdValue}>{patientIdShort}</div>
             </div>
 
@@ -626,8 +656,8 @@ export default function Profile() {
 
             {menuOpen ? (
               <div style={dropdown} role="menu" aria-label="Account menu">
-                <div style={ddName}>{fullName || "Patient Name"}</div>
-                <div style={ddSub}>Patient ID</div>
+                <div style={ddName}>{fullName || "Account"}</div>
+                <div style={ddSub}>{idLabelText}</div>
                 <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{patientIdShort}</div>
 
                 <div style={ddDivider} />
@@ -643,6 +673,27 @@ export default function Profile() {
                     Edit Profile
                   </Link>
                 </div>
+
+                {/* Optional: show link inside dropdown too (only for 2 emails) */}
+                {canSeeSuperAdminPanel ? (
+                  <>
+                    <div style={ddDivider} />
+                    <Link
+                      to="/admin/super"
+                      onClick={() => setMenuOpen(false)}
+                      style={{
+                        ...ddBtnBase,
+                        background: "#fff",
+                        color: DARK,
+                        border: "2px solid rgba(255,255,255,.9)",
+                        width: "100%",
+                      }}
+                    >
+                      <SuperAdminIcon size={18} />
+                      Super Admin Panel
+                    </Link>
+                  </>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -684,7 +735,7 @@ export default function Profile() {
 
             <div style={panels}>
               <div style={{ overflow: "hidden" }}>
-                <div style={sectionTitle}>Patient Information</div>
+                <div style={sectionTitle}>{isAdmin ? "Admin Information" : "Patient Information"}</div>
                 <p style={sectionSub}>Details from your account profile</p>
 
                 <div style={panel}>
@@ -737,6 +788,27 @@ export default function Profile() {
                     >
                       Edit Profile
                     </Link>
+
+                    {/* ✅ SUPER ADMIN PANEL BUTTON (ONLY 2 EMAILS) */}
+                    {canSeeSuperAdminPanel ? (
+                      <Link
+                        to="/admin/super"
+                        style={{
+                          textDecoration: "none",
+                          border: `2px solid ${DARK}`,
+                          color: DARK,
+                          padding: "8px 12px",
+                          borderRadius: 12,
+                          fontWeight: 900,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 8,
+                        }}
+                      >
+                        <SuperAdminIcon size={18} />
+                        Super Admin Panel
+                      </Link>
+                    ) : null}
                   </div>
                 </div>
               </div>

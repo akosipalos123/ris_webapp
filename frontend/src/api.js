@@ -10,9 +10,31 @@ async function parseJsonSafe(res) {
 }
 
 function buildErrorMessage(data, fallback) {
-  // Prefer backend standard { message } if available
+  // Prefer backend { error } then { message }
+  if (data && typeof data.error === "string" && data.error.trim()) return data.error;
   if (data && typeof data.message === "string" && data.message.trim()) return data.message;
   return fallback;
+}
+
+function getStoredTokenForPath(path) {
+  // In case this is ever executed where localStorage isn't available
+  if (typeof window === "undefined" || !window.localStorage) return undefined;
+
+  // ✅ Admin endpoints use adminToken
+  if (String(path || "").startsWith("/api/admin")) {
+    return localStorage.getItem("adminToken") || undefined;
+  }
+
+  // ✅ Everything else uses patient token
+  return localStorage.getItem("token") || undefined;
+}
+
+function authHeader(path, tokenOverride) {
+  // If caller explicitly provided tokenOverride (even null), respect it.
+  const token =
+    tokenOverride === undefined ? getStoredTokenForPath(path) : tokenOverride;
+
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export async function apiPost(path, body, token) {
@@ -20,7 +42,7 @@ export async function apiPost(path, body, token) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeader(path, token),
     },
     body: JSON.stringify(body ?? {}),
   });
@@ -34,7 +56,7 @@ export async function apiGet(path, token) {
   const res = await fetch(`${API_URL}${path}`, {
     method: "GET",
     headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeader(path, token),
     },
   });
 
@@ -43,14 +65,23 @@ export async function apiGet(path, token) {
   return data;
 }
 
-export async function apiPut(path, token, body) {
+// Backward-compatible:
+// - apiPut(path, token, body)  ✅ old usage
+// - apiPut(path, body)        ✅ new optional usage
+export async function apiPut(path, tokenOrBody, body) {
+  const usingShiftedArgs =
+    body === undefined && tokenOrBody && typeof tokenOrBody === "object";
+
+  const token = usingShiftedArgs ? undefined : tokenOrBody;
+  const payload = usingShiftedArgs ? tokenOrBody : body;
+
   const res = await fetch(`${API_URL}${path}`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeader(path, token),
     },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(payload ?? {}),
   });
 
   const data = await parseJsonSafe(res);
@@ -58,14 +89,23 @@ export async function apiPut(path, token, body) {
   return data;
 }
 
-export async function apiPatch(path, token, body) {
+// Backward-compatible:
+// - apiPatch(path, token, body) ✅ old usage
+// - apiPatch(path, body)       ✅ new optional usage
+export async function apiPatch(path, tokenOrBody, body) {
+  const usingShiftedArgs =
+    body === undefined && tokenOrBody && typeof tokenOrBody === "object";
+
+  const token = usingShiftedArgs ? undefined : tokenOrBody;
+  const payload = usingShiftedArgs ? tokenOrBody : body;
+
   const res = await fetch(`${API_URL}${path}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeader(path, token),
     },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify(payload ?? {}),
   });
 
   const data = await parseJsonSafe(res);
@@ -76,14 +116,27 @@ export async function apiPatch(path, token, body) {
 /**
  * Upload helper (multipart/form-data)
  * IMPORTANT: do NOT set Content-Type manually; browser will set boundary.
+ *
+ * Backward-compatible:
+ * - apiUpload(path, token, formData) ✅ old usage
+ * - apiUpload(path, formData)        ✅ new optional usage
  */
-export async function apiUpload(path, token, formData) {
+export async function apiUpload(path, tokenOrFormData, formData) {
+  const usingShiftedArgs =
+    formData === undefined &&
+    tokenOrFormData &&
+    typeof FormData !== "undefined" &&
+    tokenOrFormData instanceof FormData;
+
+  const token = usingShiftedArgs ? undefined : tokenOrFormData;
+  const fd = usingShiftedArgs ? tokenOrFormData : formData;
+
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeader(path, token),
     },
-    body: formData,
+    body: fd,
   });
 
   const data = await parseJsonSafe(res);

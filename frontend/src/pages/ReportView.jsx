@@ -1,177 +1,318 @@
-import { useEffect, useMemo, useState } from "react";
+// frontend/src/pages/ReportView.jsx
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { apiGet } from "../api";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
-function formatName(p) {
-  if (!p) return "-";
-  const parts = [p.lastName, p.firstName, p.middleName].filter(Boolean);
-  const base = parts.join(", ");
-  return p.suffix ? `${base} ${p.suffix}` : base;
+function safe(v) {
+  return String(v || "").trim();
 }
 
-function money(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { style: "currency", currency: "PHP" });
+function ageFromBirthdate(birthdate) {
+  if (!birthdate) return "";
+  const b = new Date(birthdate);
+  if (Number.isNaN(b.getTime())) return "";
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--;
+  return String(age);
+}
+
+function apptDateText(appt) {
+  if (appt?.year && appt?.month && appt?.day) {
+    return `${String(appt.year)}-${String(appt.month).padStart(2, "0")}-${String(appt.day).padStart(2, "0")}`;
+  }
+  if (appt?.date) {
+    const d = new Date(appt.date);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  if (appt?.createdAt) {
+    const d = new Date(appt.createdAt);
+    if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+  return "";
+}
+
+function wrapText(text, font, fontSize, maxWidth) {
+  const t = safe(text);
+  if (!t) return [];
+  const words = t.replace(/\s+/g, " ").split(" ");
+  const lines = [];
+  let line = "";
+
+  for (const w of words) {
+    const test = line ? `${line} ${w}` : w;
+    const width = font.widthOfTextAtSize(test, fontSize);
+    if (width <= maxWidth) {
+      line = test;
+    } else {
+      if (line) lines.push(line);
+      line = w;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 export default function ReportView() {
   const nav = useNavigate();
   const { appointmentId } = useParams();
 
+  const iframeRef = useRef(null);
+
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
-  const [data, setData] = useState(null);
+  const [pdfUrl, setPdfUrl] = useState("");
 
-  const printableTitle = useMemo(() => {
-    const d = data?.appointment?.date ? ` • ${data.appointment.date}` : "";
-    return `RIS Report${d}`;
-  }, [data]);
+  const TEMPLATE_URL = `${import.meta.env.BASE_URL}images/format.pdf`;
 
+  // Cleanup blob url
   useEffect(() => {
-    (async () => {
-      const token = localStorage.getItem("token");
-      if (!token) return nav("/login");
+    return () => {
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      try {
-        setLoading(true);
-        setMsg("");
-        const resp = await apiGet(`/api/report/${appointmentId}`, token);
-        setData(resp);
-      } catch (err) {
-        setMsg(err.message || "Failed to load report");
-      } finally {
-        setLoading(false);
+  async function buildAndLoadPdf() {
+    const token = localStorage.getItem("token");
+    if (!token) return nav("/login");
+
+    setLoading(true);
+    setMsg("");
+    setPdfUrl("");
+
+    try {
+      const me = await apiGet("/api/auth/me", token);
+
+      // find appointment by id
+      const mine = await apiGet("/api/appointments/mine", token);
+      const appts = Array.isArray(mine) ? mine : [];
+      const appt = appts.find((a) => String(a?._id) === String(appointmentId));
+
+      if (!appt) {
+        throw new Error("Report not found for this appointment.");
       }
-    })();
-  }, [nav, appointmentId]);
+
+      // Map template fields (based on placeholders in your PDF) :contentReference[oaicite:2]{index=2}
+      const fullName = [
+        safe(me.lastName),
+        safe(me.firstName),
+        safe(me.middleName),
+      ].filter(Boolean).join(", ") + (me?.suffix ? `, ${safe(me.suffix)}` : "");
+
+      const accession = safe(appt.accession) || String(appt._id || "").slice(-8).toUpperCase();
+      const sex = safe(me.gender);
+      const age = ageFromBirthdate(me.birthdate);
+
+      const bodyPart = safe(appt.bodyPart) || safe(appt.radiographType) || safe(appt.procedure);
+      const refPhy = safe(appt.refPhy) || safe(appt.refPhysician) || "—";
+      const studyDate = apptDateText(appt);
+      const auditor = safe(appt.auditor) || safe(appt.radTech) || "—";
+
+      const description =
+        safe(appt.findings) ||
+        safe(appt.resultNotes) ||
+        safe(appt.description) ||
+        "";
+
+      const diagnosis =
+        safe(appt.impression) ||
+        safe(appt.interpretation) ||
+        safe(appt.diagnosis) ||
+        "";
+
+      // Load template
+      const tplRes = await fetch(TEMPLATE_URL);
+      if (!tplRes.ok) throw new Error("Cannot load report template PDF (/images/format.pdf).");
+      const tplBytes = await tplRes.arrayBuffer();
+
+      const pdfDoc = await PDFDocument.load(tplBytes);
+      const page = pdfDoc.getPages()[0];
+      const { height } = page.getSize();
+
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      // === Coordinates (tuned for your template layout) ===
+      // NOTE: adjust X/Y slightly if needed based on your browser print preview.
+      const POS = {
+        name: { x: 110, y: height - 180 },
+        accession: { x: 455, y: height - 180 },
+
+        sex: { x: 110, y: height - 198 },
+        age: { x: 370, y: height - 198 },
+
+        bodyPart: { x: 110, y: height - 216 },
+        refPhy: { x: 380, y: height - 216 },
+
+        date: { x: 110, y: height - 234 },
+        auditor: { x: 400, y: height - 234 },
+
+        description: { x: 60, y: height - 305, maxWidth: 480, lineHeight: 14, maxLines: 10 },
+        diagnosis: { x: 60, y: height - 415, maxWidth: 480, lineHeight: 14, maxLines: 8 },
+      };
+
+      const textColor = rgb(0, 0, 0);
+      const fsSmall = 11;
+      const fsBody = 11;
+
+      // Header fields
+      page.drawText(fullName || "—", { x: POS.name.x, y: POS.name.y, size: fsSmall, font, color: textColor });
+      page.drawText(accession || "—", { x: POS.accession.x, y: POS.accession.y, size: fsSmall, font, color: textColor });
+
+      page.drawText(sex || "—", { x: POS.sex.x, y: POS.sex.y, size: fsSmall, font, color: textColor });
+      page.drawText(age || "—", { x: POS.age.x, y: POS.age.y, size: fsSmall, font, color: textColor });
+
+      page.drawText(bodyPart || "—", { x: POS.bodyPart.x, y: POS.bodyPart.y, size: fsSmall, font, color: textColor });
+      page.drawText(refPhy || "—", { x: POS.refPhy.x, y: POS.refPhy.y, size: fsSmall, font, color: textColor });
+
+      page.drawText(studyDate || "—", { x: POS.date.x, y: POS.date.y, size: fsSmall, font, color: textColor });
+      page.drawText(auditor || "—", { x: POS.auditor.x, y: POS.auditor.y, size: fsSmall, font, color: textColor });
+
+      // Description block
+      if (description) {
+        const lines = wrapText(description, font, fsBody, POS.description.maxWidth).slice(0, POS.description.maxLines);
+        let y = POS.description.y;
+        for (const line of lines) {
+          page.drawText(line, { x: POS.description.x, y, size: fsBody, font, color: textColor });
+          y -= POS.description.lineHeight;
+        }
+      }
+
+      // Diagnosis/Impression block
+      if (diagnosis) {
+        const lines = wrapText(diagnosis, font, fsBody, POS.diagnosis.maxWidth).slice(0, POS.diagnosis.maxLines);
+        let y = POS.diagnosis.y;
+        for (const line of lines) {
+          page.drawText(line, { x: POS.diagnosis.x, y, size: fsBody, font: bold, color: textColor });
+          y -= POS.diagnosis.lineHeight;
+        }
+      }
+
+      const outBytes = await pdfDoc.save();
+      const blob = new Blob([outBytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+
+      setPdfUrl(url);
+    } catch (e) {
+      setMsg(e?.message || "Failed to generate report.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Build on mount
+  useEffect(() => {
+    buildAndLoadPdf();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointmentId]);
+
+  // Auto-print attempt (works in many browsers; user can always click Print)
+  function tryPrint() {
+    try {
+      if (!iframeRef.current) return;
+      // Some browsers allow printing PDF iframe directly
+      iframeRef.current.contentWindow?.focus?.();
+      iframeRef.current.contentWindow?.print?.();
+    } catch {
+      // ignore; user can click browser print or download
+    }
+  }
 
   return (
-    <div className="min-vh-100" style={{ background: "#f5f6f8" }}>
-      <div className="container py-4">
-        <div className="d-flex align-items-center justify-content-between mb-3">
-          <div>
-            <h1 className="h4 mb-0">{printableTitle}</h1>
-            <div className="text-muted">Appointment report (billing + images + results)</div>
-          </div>
-          <div className="d-flex gap-2">
-            <button className="btn btn-outline-secondary btn-sm" onClick={() => window.print()}>
-              Print
-            </button>
-            <Link to="/profile" className="btn btn-outline-secondary btn-sm">
-              Back
-            </Link>
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 26, fontWeight: 900 }}>Full Radiographic Report</div>
+          <div style={{ color: "#64748b", fontWeight: 700, marginTop: 2 }}>
+            Generated from template and filled with patient + appointment details.
           </div>
         </div>
 
-        {msg ? <div className="alert alert-warning">{msg}</div> : null}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <Link to="/diagnostic-results" style={{ textDecoration: "none", fontWeight: 900 }}>
+            ← Back
+          </Link>
 
-        <div className="card border-0 shadow-sm">
-          <div className="card-body p-4">
-            {loading ? (
-              <div className="text-muted">Loading...</div>
-            ) : !data ? (
-              <div className="text-muted">No report found.</div>
-            ) : (
-              <>
-                {/* Patient */}
-                <div className="mb-4">
-                  <div className="fw-semibold">Patient</div>
-                  <div className="text-muted">{formatName(data.patient)}</div>
-                  <div className="text-muted small">
-                    Email: {data.patient?.email || "-"} • Contact: {data.patient?.contactNumber || "-"}
-                  </div>
-                </div>
+          <button
+            type="button"
+            onClick={buildAndLoadPdf}
+            disabled={loading}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "2px solid #0b3d2e",
+              background: "#fff",
+              color: "#0b3d2e",
+              fontWeight: 900,
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
+          >
+            Refresh
+          </button>
 
-                {/* Appointment */}
-                <div className="mb-4">
-                  <div className="fw-semibold">Appointment</div>
-                  <div className="text-muted">
-                    {data.appointment?.procedure || "-"} • {data.appointment?.date || "-"} • Status:{" "}
-                    {data.appointment?.status || "-"}
-                  </div>
-                </div>
+          <button
+            type="button"
+            onClick={tryPrint}
+            disabled={!pdfUrl}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "2px solid #0b3d2e",
+              background: "#0b3d2e",
+              color: "#fff",
+              fontWeight: 900,
+              cursor: !pdfUrl ? "not-allowed" : "pointer",
+            }}
+          >
+            Print
+          </button>
 
-                {/* Result */}
-                <div className="mb-4">
-                  <div className="fw-semibold">Result</div>
-                  <div className="border rounded p-3 bg-light">
-                    {data.result?.resultNotes ? data.result.resultNotes : "No notes."}
-                  </div>
-                  {data.result?.resultPdfUrl ? (
-                    <div className="mt-2 d-flex flex-wrap gap-2">
-                      <a
-                        className="btn btn-sm btn-outline-primary"
-                        href={data.result.resultPdfUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open Result PDF
-                      </a>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* Billing */}
-                <div className="mb-4">
-                  <div className="fw-semibold">Billing</div>
-                  {!data.bill ? (
-                    <div className="text-muted">No bill issued yet.</div>
-                  ) : (
-                    <>
-                      <div className="text-muted small mb-2">
-                        Status: <span className="fw-semibold">{data.bill.status}</span> • Total:{" "}
-                        <span className="fw-semibold">{money(data.bill.totalAmount)}</span>
-                      </div>
-                      {Array.isArray(data.bill.items) && data.bill.items.length > 0 ? (
-                        <ul className="list-group">
-                          {data.bill.items.map((it, idx) => (
-                            <li key={idx} className="list-group-item d-flex justify-content-between">
-                              <span>{it.label}</span>
-                              <span className="fw-semibold">{money(it.amount)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <div className="text-muted">No bill items.</div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {/* Images */}
-                <div>
-                  <div className="fw-semibold">Diagnostic Images</div>
-                  {Array.isArray(data.images) && data.images.length > 0 ? (
-                    <div className="row g-3 mt-1">
-                      {data.images.map((img) => (
-                        <div className="col-12 col-md-6 col-lg-4" key={img._id}>
-                          <div className="border rounded bg-white p-2 h-100">
-                            <img
-                              src={img.imageUrl}
-                              alt={img.caption || "Diagnostic"}
-                              className="img-fluid rounded border"
-                              style={{ width: "100%", height: 220, objectFit: "cover" }}
-                            />
-                            <div className="mt-2">
-                              <div className="fw-semibold small">{img.radiographType || "Radiograph"}</div>
-                              <div className="text-muted small">{img.caption || "—"}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-muted">No images uploaded yet.</div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          {pdfUrl ? (
+            <a
+              href={pdfUrl}
+              download={`report_${appointmentId}.pdf`}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "2px solid #0b3d2e",
+                background: "#fff",
+                color: "#0b3d2e",
+                fontWeight: 900,
+                textDecoration: "none",
+              }}
+            >
+              Download
+            </a>
+          ) : null}
         </div>
+      </div>
 
-        <div className="text-center text-muted mt-3" style={{ fontSize: 12 }}>
-          RISWebApp • Local Dev
+      {msg ? (
+        <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 12, border: "1px solid #f59e0b", background: "#fffbeb", fontWeight: 800 }}>
+          {msg}
         </div>
+      ) : null}
+
+      <div style={{ marginTop: 12, border: "2px solid #0b3d2e", borderRadius: 12, overflow: "hidden", height: "82vh" }}>
+        {loading ? (
+          <div style={{ padding: 14, color: "#64748b", fontWeight: 800 }}>Generating PDF…</div>
+        ) : pdfUrl ? (
+          <iframe
+            ref={iframeRef}
+            title="Full Report PDF"
+            src={pdfUrl}
+            style={{ width: "100%", height: "100%", border: 0 }}
+            onLoad={() => {
+              // Auto-print attempt after it renders
+              setTimeout(() => tryPrint(), 350);
+            }}
+          />
+        ) : (
+          <div style={{ padding: 14, color: "#64748b", fontWeight: 800 }}>No PDF generated.</div>
+        )}
       </div>
     </div>
   );

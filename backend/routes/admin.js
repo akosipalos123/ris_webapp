@@ -1,14 +1,14 @@
 // backend/routes/admin.js
 const express = require("express");
-const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const multer = require("multer");
 
-const Patient = require("../models/Patient");
 const Appointment = require("../models/Appointment");
 const Bill = require("../models/Bill");
-const { isAdminEmail } = require("../utils/admin");
 const cloudinary = require("../utils/cloudinary");
+
+// ✅ NEW: admin-only auth middleware (separate from patient tokens)
+const { requireAdminAuth, requireAdminRole } = require("../middleware/adminAuth");
 
 const router = express.Router();
 
@@ -23,41 +23,11 @@ function fmtYMD(y, m, d) {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-// ===== Auth middleware =====
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const [type, token] = header.split(" ");
-
-  if (type !== "Bearer" || !token) {
-    return res.status(401).json({ message: "Missing or invalid Authorization header" });
-  }
-
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = payload.sub;
-    next();
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired token" });
-  }
-}
-
-async function requireAdmin(req, res, next) {
-  try {
-    const patient = await Patient.findById(req.userId).select("email");
-    if (!patient) return res.status(401).json({ message: "Invalid session" });
-
-    if (!isAdminEmail(patient.email)) {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-
-    next();
-  } catch (err) {
-    return res.status(500).json({ message: "Admin check failed", error: err.message });
-  }
-}
+// ✅ Require either admin or superadmin
+const requireAnyAdmin = [requireAdminAuth, requireAdminRole("admin", "superadmin")];
 
 // ===== Existing: GET appointments (admin) =====
-router.get("/appointments", requireAuth, requireAdmin, async (req, res) => {
+router.get("/appointments", ...requireAnyAdmin, async (req, res) => {
   try {
     const { status, procedure, date } = req.query;
 
@@ -87,7 +57,7 @@ router.get("/appointments", requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ===== Existing: PATCH appointment status =====
-router.patch("/appointments/:id/status", requireAuth, requireAdmin, async (req, res) => {
+router.patch("/appointments/:id/status", ...requireAnyAdmin, async (req, res) => {
   try {
     const { status } = req.body;
 
@@ -124,10 +94,11 @@ router.patch("/appointments/:id/status", requireAuth, requireAdmin, async (req, 
       }
     }
 
-    const appt = await Appointment.findByIdAndUpdate(req.params.id, { $set: { status } }, { new: true }).populate(
-      "patientId",
-      "firstName lastName email"
-    );
+    const appt = await Appointment.findByIdAndUpdate(
+      req.params.id,
+      { $set: { status } },
+      { new: true }
+    ).populate("patientId", "firstName lastName email");
 
     return res.json(appt);
   } catch (err) {
@@ -151,7 +122,7 @@ function uploadPdfBufferToCloudinary(buffer, filename) {
         folder: "riswebapp/results",
         resource_type: "raw",
         public_id: publicId,
-        format: "pdf", // ✅ ensures secure_url ends with .pdf
+        format: "pdf",
         overwrite: true,
       },
       (err, result) => {
@@ -165,14 +136,12 @@ function uploadPdfBufferToCloudinary(buffer, filename) {
 
 router.post(
   "/appointments/:id/complete",
-  requireAuth,
-  requireAdmin,
+  ...requireAnyAdmin,
   uploadPdf.single("resultPdf"),
   async (req, res) => {
     try {
       const notes = String(req.body?.notes || "").trim();
 
-      // billing fields (sent via FormData from AdminAppointments.jsx)
       const billingCode = String(req.body?.billingCode || "").trim();
       const billingLabel = String(req.body?.billingLabel || "").trim();
       const billingCurrency = String(req.body?.billingCurrency || "PHP").trim() || "PHP";
@@ -194,14 +163,14 @@ router.post(
       const safeName = `appt_${appt._id}_${Date.now()}.pdf`;
       const uploaded = await uploadPdfBufferToCloudinary(req.file.buffer, safeName);
 
-      // appointment completion
       appt.status = "Completed";
       appt.resultPdfUrl = uploaded.secure_url || "";
       appt.resultNotes = notes;
       appt.completedAt = new Date();
-      appt.completedBy = req.userId;
 
-      // save billing snapshot to appointment
+      // ✅ Admin is now a User, not a Patient
+      appt.completedBy = req.adminId;
+
       appt.billing = {
         code: billingCode,
         label: billingLabel,
@@ -211,8 +180,6 @@ router.post(
 
       await appt.save();
 
-      // ✅ upsert Bill (ris_db.bills) — one bill per appointment
-      // NOTE: receiptUrl here is for PAYMENT RECEIPT; leave empty by default.
       await Bill.findOneAndUpdate(
         { appointmentId: appt._id },
         {
@@ -220,12 +187,10 @@ router.post(
             patientId: appt.patientId,
             appointmentId: appt._id,
 
-            // patient UI
             procedure: billingLabel,
             totalAmount: amount,
             currency: billingCurrency,
 
-            // structured billing snapshot
             billing: {
               code: billingCode,
               label: billingLabel,
@@ -233,21 +198,21 @@ router.post(
               currency: billingCurrency,
             },
 
-            // optional itemized
             items: [{ code: billingCode, label: billingLabel, amount, qty: 1 }],
 
-            status: "Pending", // admin will later update to Paid/Unpaid/Voided
+            status: "Pending",
             issuedAt: appt.completedAt || new Date(),
-            receiptUrl: "", // ✅ payment receipt gets uploaded later
+            receiptUrl: "",
           },
-          $unset: {
-            paidAt: "",
-          },
+          $unset: { paidAt: "" },
         },
         { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
       );
 
-      const populated = await Appointment.findById(appt._id).populate("patientId", "firstName lastName email");
+      const populated = await Appointment.findById(appt._id).populate(
+        "patientId",
+        "firstName lastName email"
+      );
       return res.json(populated);
     } catch (err) {
       return res.status(500).json({ message: "Complete failed", error: err.message });
@@ -256,9 +221,7 @@ router.post(
 );
 
 // ===== BILL (legacy create/update per appointment) =====
-// POST /api/admin/appointments/:id/bill
-// body: { items:[{label, amount}], status?: "Pending"|"Unpaid"|"Paid"|"Voided" }
-router.post("/appointments/:id/bill", requireAuth, requireAdmin, async (req, res) => {
+router.post("/appointments/:id/bill", ...requireAnyAdmin, async (req, res) => {
   try {
     const appointmentId = String(req.params.id || "").trim();
     if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
@@ -297,11 +260,8 @@ router.post("/appointments/:id/bill", requireAuth, requireAdmin, async (req, res
       },
     };
 
-    if (status === "Paid") {
-      updateOps.$set.paidAt = new Date();
-    } else {
-      updateOps.$unset = { paidAt: "" };
-    }
+    if (status === "Paid") updateOps.$set.paidAt = new Date();
+    else updateOps.$unset = { paidAt: "" };
 
     const doc = await Bill.findOneAndUpdate({ appointmentId }, updateOps, {
       upsert: true,
@@ -316,8 +276,7 @@ router.post("/appointments/:id/bill", requireAuth, requireAdmin, async (req, res
   }
 });
 
-// GET /api/admin/appointments/:id/bill
-router.get("/appointments/:id/bill", requireAuth, requireAdmin, async (req, res) => {
+router.get("/appointments/:id/bill", ...requireAnyAdmin, async (req, res) => {
   try {
     const appointmentId = String(req.params.id || "").trim();
     if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
@@ -331,9 +290,7 @@ router.get("/appointments/:id/bill", requireAuth, requireAdmin, async (req, res)
   }
 });
 
-// ===== NEW: Update bill status (no overwrite of amounts/items) =====
-// PATCH /api/admin/bills/:id/status  body: { status: "Pending"|"Unpaid"|"Paid"|"Voided" }
-router.patch("/bills/:id/status", requireAuth, requireAdmin, async (req, res) => {
+router.patch("/bills/:id/status", ...requireAnyAdmin, async (req, res) => {
   try {
     const billId = String(req.params.id || "").trim();
     if (!mongoose.Types.ObjectId.isValid(billId)) {
@@ -347,22 +304,22 @@ router.patch("/bills/:id/status", requireAuth, requireAdmin, async (req, res) =>
     }
 
     const updateOps = { $set: { status: nextStatus } };
-    if (nextStatus === "Paid") {
-      updateOps.$set.paidAt = new Date();
-    } else {
-      updateOps.$unset = { paidAt: "" };
-    }
+    if (nextStatus === "Paid") updateOps.$set.paidAt = new Date();
+    else updateOps.$unset = { paidAt: "" };
 
-    const bill = await Bill.findByIdAndUpdate(billId, updateOps, { new: true, runValidators: true }).lean();
+    const bill = await Bill.findByIdAndUpdate(billId, updateOps, {
+      new: true,
+      runValidators: true,
+    }).lean();
+
     if (!bill) return res.status(404).json({ message: "Bill not found" });
-
     return res.json(bill);
   } catch (err) {
     return res.status(500).json({ message: "Update bill status failed", error: err.message });
   }
 });
 
-// ===== NEW: Upload payment receipt for a bill =====
+// ===== Upload payment receipt for a bill =====
 const uploadReceipt = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
@@ -380,7 +337,6 @@ function uploadReceiptBufferToCloudinary(buffer, filename, mimetype) {
     overwrite: true,
   };
 
-  // Force .pdf URL for PDF receipts
   if (isPdf) options.format = "pdf";
 
   return new Promise((resolve, reject) => {
@@ -392,36 +348,40 @@ function uploadReceiptBufferToCloudinary(buffer, filename, mimetype) {
   });
 }
 
-// POST /api/admin/bills/:id/receipt  (multipart field: receipt)
-router.post("/bills/:id/receipt", requireAuth, requireAdmin, uploadReceipt.single("receipt"), async (req, res) => {
-  try {
-    const billId = String(req.params.id || "").trim();
-    if (!mongoose.Types.ObjectId.isValid(billId)) {
-      return res.status(400).json({ message: "Invalid bill id" });
+router.post(
+  "/bills/:id/receipt",
+  ...requireAnyAdmin,
+  uploadReceipt.single("receipt"),
+  async (req, res) => {
+    try {
+      const billId = String(req.params.id || "").trim();
+      if (!mongoose.Types.ObjectId.isValid(billId)) {
+        return res.status(400).json({ message: "Invalid bill id" });
+      }
+
+      if (!req.file) return res.status(400).json({ message: "Receipt file is required." });
+
+      const okTypes = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+      if (!okTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({ message: "Receipt must be PDF or image (PNG/JPG/WebP)." });
+      }
+
+      const bill = await Bill.findById(billId);
+      if (!bill) return res.status(404).json({ message: "Bill not found" });
+
+      const ext = req.file.mimetype === "application/pdf" ? ".pdf" : ".jpg";
+      const safeName = `bill_${bill._id}_${Date.now()}${ext}`;
+      const uploaded = await uploadReceiptBufferToCloudinary(req.file.buffer, safeName, req.file.mimetype);
+
+      bill.receiptUrl = uploaded.secure_url || "";
+      await bill.save();
+
+      return res.json(bill.toObject());
+    } catch (err) {
+      return res.status(500).json({ message: "Upload receipt failed", error: err.message });
     }
-
-    if (!req.file) return res.status(400).json({ message: "Receipt file is required." });
-
-    const okTypes = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
-    if (!okTypes.includes(req.file.mimetype)) {
-      return res.status(400).json({ message: "Receipt must be PDF or image (PNG/JPG/WebP)." });
-    }
-
-    const bill = await Bill.findById(billId);
-    if (!bill) return res.status(404).json({ message: "Bill not found" });
-
-    const ext = req.file.mimetype === "application/pdf" ? ".pdf" : ".jpg";
-    const safeName = `bill_${bill._id}_${Date.now()}${ext}`;
-    const uploaded = await uploadReceiptBufferToCloudinary(req.file.buffer, safeName, req.file.mimetype);
-
-    bill.receiptUrl = uploaded.secure_url || "";
-    await bill.save();
-
-    return res.json(bill.toObject());
-  } catch (err) {
-    return res.status(500).json({ message: "Upload receipt failed", error: err.message });
   }
-});
+);
 
 // ===== Diagnostic Images Upload =====
 const uploadImages = multer({
@@ -429,11 +389,9 @@ const uploadImages = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB per image
 });
 
-// POST /api/admin/appointments/:id/diagnostic-images (multipart)
 router.post(
   "/appointments/:id/diagnostic-images",
-  requireAuth,
-  requireAdmin,
+  ...requireAnyAdmin,
   uploadImages.array("images", 12),
   async (req, res) => {
     try {
@@ -488,7 +446,10 @@ router.post(
 
       await appt.save();
 
-      const populated = await Appointment.findById(appt._id).populate("patientId", "firstName lastName email");
+      const populated = await Appointment.findById(appt._id).populate(
+        "patientId",
+        "firstName lastName email"
+      );
       return res.json(populated);
     } catch (err) {
       return res.status(500).json({ message: "Upload images failed", error: err.message });
@@ -497,8 +458,7 @@ router.post(
 );
 
 // ===== Update report fields (no files) =====
-// PATCH /api/admin/appointments/:id/report
-router.patch("/appointments/:id/report", requireAuth, requireAdmin, async (req, res) => {
+router.patch("/appointments/:id/report", ...requireAnyAdmin, async (req, res) => {
   try {
     const appointmentId = String(req.params.id || "").trim();
     if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
@@ -511,10 +471,11 @@ router.patch("/appointments/:id/report", requireAuth, requireAdmin, async (req, 
       if (req.body?.[f] !== undefined) payload[f] = String(req.body[f] || "").trim();
     }
 
-    const appt = await Appointment.findByIdAndUpdate(appointmentId, { $set: payload }, { new: true }).populate(
-      "patientId",
-      "firstName lastName email"
-    );
+    const appt = await Appointment.findByIdAndUpdate(
+      appointmentId,
+      { $set: payload },
+      { new: true }
+    ).populate("patientId", "firstName lastName email");
 
     if (!appt) return res.status(404).json({ message: "Appointment not found" });
 

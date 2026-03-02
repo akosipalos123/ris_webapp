@@ -11,12 +11,23 @@ import BookAppointment from "./pages/BookAppointment.jsx";
 import AdminAppointments from "./pages/AdminAppointments.jsx";
 import AdminDataRecords from "./pages/AdminDataRecords.jsx";
 
+// ✅ NEW: Admin invite registration page
+import AdminRegister from "./pages/AdminRegister.jsx";
+
 // NEW PAGES (make sure these files exist)
 import MyBills from "./pages/MyBills.jsx";
 import DiagnosticImages from "./pages/DiagnosticImages.jsx";
 import DiagnosticResults from "./pages/DiagnosticResults.jsx";
 import Radiographs from "./pages/Radiographs.jsx";
 import ReportView from "./pages/ReportView.jsx";
+
+// ✅ NEW: Super Admin Panel page
+import SuperAdminPanel from "./pages/SuperAdminPanel.jsx";
+
+// ✅ ONLY THESE EMAILS CAN ACCESS superadmin panel
+const SUPER_ADMIN_EMAILS = new Set(
+  ["rondelserrano1@gmail.com", "cambsrt.slsu@gmail.com"].map((e) => e.toLowerCase())
+);
 
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem("token");
@@ -57,6 +68,50 @@ function AdminRoute({ children }) {
     );
   }
 
+  if (!state.ok) return <Navigate to="/profile" replace />;
+
+  return children;
+}
+
+/** ✅ Superadmin-only route (ONLY 2 emails) */
+function SuperAdminRoute({ children }) {
+  const [state, setState] = useState({ loading: true, ok: false, error: false });
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        if (mounted) setState({ loading: false, ok: false, error: true });
+        return;
+      }
+
+      try {
+        const me = await apiGet("/api/auth/me", token);
+        const email = String(me?.email || "").trim().toLowerCase();
+
+        const ok = !!me?.isAdmin && SUPER_ADMIN_EMAILS.has(email);
+        if (mounted) setState({ loading: false, ok, error: false });
+      } catch {
+        if (mounted) setState({ loading: false, ok: false, error: true });
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (state.loading) {
+    return (
+      <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">
+        Checking access...
+      </div>
+    );
+  }
+
+  if (state.error) return <Navigate to="/login" replace />;
   if (!state.ok) return <Navigate to="/profile" replace />;
 
   return children;
@@ -119,10 +174,9 @@ function RootRedirect() {
         return;
       }
       try {
-        const me = await apiGet("/api/auth/me", token);
+        await apiGet("/api/auth/me", token);
         if (!mounted) return;
-        // both patient and admin land on the shared Profile page
-        setDest(me?.isAdmin ? "/profile" : "/profile");
+        setDest("/profile");
       } catch {
         if (mounted) setDest("/login");
       }
@@ -151,8 +205,12 @@ export default function App() {
         {/* Root smart redirect */}
         <Route path="/" element={<RootRedirect />} />
 
+        {/* Public routes */}
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
+
+        {/* ✅ Public invite-based admin registration */}
+        <Route path="/admin/register" element={<AdminRegister />} />
 
         {/* Shared protected routes */}
         <Route
@@ -183,6 +241,23 @@ export default function App() {
           }
         />
         <Route path="/appointments/book" element={<Navigate to="/appointments" replace />} />
+
+        {/* ✅ SUPERADMIN PANEL (real route) */}
+        <Route
+          path="/admin/super"
+          element={
+            <ProtectedRoute>
+              <AdminRoute>
+                <SuperAdminRoute>
+                  <SuperAdminPanel />
+                </SuperAdminRoute>
+              </AdminRoute>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ✅ alias for old direct link */}
+        <Route path="/superadmin" element={<Navigate to="/admin/super" replace />} />
 
         {/* ✅ PATIENT-ONLY PAGES */}
         <Route
@@ -229,7 +304,6 @@ export default function App() {
           }
         />
 
-        {/* ✅ PATIENT-ONLY (recommended, because it’s the full report view) */}
         <Route
           path="/report/:appointmentId"
           element={

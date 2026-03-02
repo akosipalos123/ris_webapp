@@ -9,8 +9,13 @@ const authRoutes = require("./routes/auth");
 const appointmentsRoutes = require("./routes/appointments");
 const uploadRoutes = require("./routes/upload");
 const adminRoutes = require("./routes/admin");
-const billsRoutes = require("./routes/bills"); // ✅ enable now
-const configRoutes = require("./routes/configRoutes"); // ✅ ADD THIS
+const billsRoutes = require("./routes/bills");
+const configRoutes = require("./routes/configRoutes");
+
+// ✅ Admin auth + invite + admin user management routes
+const adminAuthRoutes = require("./routes/adminAuth");
+const adminInvitesRoutes = require("./routes/adminInvites");
+const adminUsersRoutes = require("./routes/adminUsers"); // ✅ superadmin: manage admins
 
 const app = express();
 
@@ -38,12 +43,20 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// ✅ Patient auth + patient-facing APIs
 app.use("/api/auth", authRoutes);
 app.use("/api/appointments", appointmentsRoutes);
 app.use("/api/upload", uploadRoutes);
+app.use("/api/bills", billsRoutes);
+app.use("/api/config", configRoutes);
+
+// ✅ Admin auth + superadmin features (mount BEFORE /api/admin)
+app.use("/api/admin/auth", adminAuthRoutes);
+app.use("/api/admin/invites", adminInvitesRoutes);
+app.use("/api/admin/users", adminUsersRoutes);
+
+// ✅ Existing admin APIs (appointments/billing/etc)
 app.use("/api/admin", adminRoutes);
-app.use("/api/bills", billsRoutes); // ✅ required for MyBills page
-app.use("/api/config", configRoutes); // ✅ NOW WORKS
 
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);

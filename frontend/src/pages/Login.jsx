@@ -8,7 +8,7 @@ export default function Login() {
 
   const [form, setForm] = useState({ email: "", password: "" });
 
-  // ✅ OTP states
+  // ✅ OTP states (patient flow)
   const [otp, setOtp] = useState("");
   const [otpToken, setOtpToken] = useState("");
   const [otpSent, setOtpSent] = useState(false);
@@ -26,13 +26,17 @@ export default function Login() {
   );
 
   // ✅ local fallback bg (Vite public)
-  // Put file at: frontend/public/images/background.png
   const FALLBACK_BG = `${import.meta.env.BASE_URL}images/background.png`;
 
-  // if already logged in
+  // If already logged in:
+  // - prefer patient session (token) -> /profile
+  // - else admin session (adminToken) -> /admin
   useEffect(() => {
     const token = localStorage.getItem("token");
-    if (token) nav("/profile");
+    if (token) return nav("/profile");
+
+    const adminToken = localStorage.getItem("adminToken");
+    if (adminToken) return nav("/admin");
   }, [nav]);
 
   // fetch public config (login background) — same as Register.jsx
@@ -66,6 +70,26 @@ export default function Login() {
     setMsg("");
   }
 
+  // ✅ Try admin login first (no OTP for now)
+  async function tryAdminLogin() {
+    const data = await apiPost("/api/admin/auth/login", {
+      email: sanitizedEmail,
+      password: form.password,
+      keepSignedIn,
+    });
+
+    if (!data?.token) throw new Error("Admin login token missing. Please try again.");
+
+    // ✅ prevent mixed sessions
+    localStorage.removeItem("token");
+
+    localStorage.setItem("adminToken", data.token);
+    localStorage.setItem("adminRole", data.user?.role || "");
+
+    nav("/admin");
+  }
+
+  // Patient OTP step 1
   async function requestOtp() {
     setMsg("");
     setLoading(true);
@@ -80,7 +104,7 @@ export default function Login() {
         return;
       }
 
-      // ✅ Step 1: Verify credentials + send OTP
+      // ✅ Patient flow: verify credentials + send OTP
       const data = await apiPost("/api/auth/login-otp", {
         email: sanitizedEmail,
         password: form.password,
@@ -102,13 +126,14 @@ export default function Login() {
     }
   }
 
+  // Patient OTP step 2
   async function verifyOtpAndLogin() {
     setMsg("");
     setLoading(true);
 
     try {
       if (!otpSent || !otpToken) {
-        setMsg("Please click Send OTP first.");
+        setMsg("Please click Continue first.");
         return;
       }
 
@@ -118,7 +143,6 @@ export default function Login() {
         return;
       }
 
-      // ✅ Step 2: Verify OTP → return token
       const data = await apiPost("/api/auth/login", {
         otpToken,
         otp: otpClean,
@@ -128,6 +152,10 @@ export default function Login() {
       if (!data?.token) {
         throw new Error("Login token missing. Please try again.");
       }
+
+      // ✅ prevent mixed sessions
+      localStorage.removeItem("adminToken");
+      localStorage.removeItem("adminRole");
 
       localStorage.setItem("token", data.token);
       nav("/profile");
@@ -140,8 +168,38 @@ export default function Login() {
 
   async function onSubmit(e) {
     e.preventDefault();
-    if (!otpSent) return requestOtp();
-    return verifyOtpAndLogin();
+
+    // If OTP already sent, we're in patient step 2
+    if (otpSent) return verifyOtpAndLogin();
+
+    setMsg("");
+
+    if (!sanitizedEmail) {
+      setMsg("Please enter your email.");
+      return;
+    }
+    if (!form.password) {
+      setMsg("Please enter your password.");
+      return;
+    }
+
+    // ✅ Step 1: Try admin login first
+    setLoading(true);
+    let adminLoggedIn = false;
+
+    try {
+      await tryAdminLogin();
+      adminLoggedIn = true;
+      return;
+    } catch {
+      // Ignore admin failure and fall back to patient OTP
+    } finally {
+      // Important: only stop loading if we're about to switch to patient OTP request
+      if (!adminLoggedIn) setLoading(false);
+    }
+
+    // ✅ Step 2: Patient OTP request
+    return requestOtp();
   }
 
   return (
@@ -161,7 +219,9 @@ export default function Login() {
 
       <div className="synapse-card synapse-card--login">
         <h1 className="synapse-title">Welcome!</h1>
-        <div className="synapse-subtitle">Sign in to your account</div>
+        <div className="synapse-subtitle">
+          Sign in to your account (Admins sign in directly; Patients receive OTP)
+        </div>
 
         {msg ? <div className="synapse-alert">{msg}</div> : null}
 
@@ -278,10 +338,10 @@ export default function Login() {
             {loading
               ? otpSent
                 ? "Verifying..."
-                : "Sending OTP..."
+                : "Continuing..."
               : otpSent
               ? "Verify & Sign In"
-              : "Send OTP"}
+              : "Continue"}
           </button>
 
           <div className="synapse-divider">

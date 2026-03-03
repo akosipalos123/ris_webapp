@@ -3,12 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPatch, apiPost } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-/* ✅ ONLY THESE EMAILS SEE "SUPER ADMIN PANEL" */
-const SUPER_ADMIN_EMAILS = new Set([
-  "rondelserrano1@gmail.com",
-  "cambsrt.slsu@gmail.com",
-]);
-
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
   return (
@@ -159,8 +153,9 @@ export default function SuperAdminPanel() {
   const [showArchived, setShowArchived] = useState(false);
 
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("admin"); // ✅ NEW: admin | superadmin
   const [inviteSending, setInviteSending] = useState(false);
-  const [inviteResult, setInviteResult] = useState(null);
+  const [inviteResult, setInviteResult] = useState(null); // { email, role, bsrtAdminId, inviteLink, expiresAt }
 
   const [createForm, setCreateForm] = useState({
     firstName: "",
@@ -183,7 +178,7 @@ export default function SuperAdminPanel() {
   });
 
   // Which backend admin-users API exists
-  const [adminApiMode, setAdminApiMode] = useState("users");
+  const [adminApiMode, setAdminApiMode] = useState("patients");
 
   useEffect(() => {
     let mounted = true;
@@ -199,10 +194,9 @@ export default function SuperAdminPanel() {
         if (!mounted) return;
         setProfile(me);
 
-        const emailClean = String(me?.email || "").trim().toLowerCase();
-        const isAdmin = !!me?.isAdmin;
-
-        const canSee = isAdmin && SUPER_ADMIN_EMAILS.has(emailClean);
+        // ✅ Role-based access: only superadmin can access this page
+        const roleClean = String(me?.role || "").trim().toLowerCase();
+        const canSee = roleClean === "superadmin" || me?.isSuperAdmin === true;
         if (!canSee) return nav("/profile");
 
         await loadAdmins(mounted, token);
@@ -263,9 +257,9 @@ export default function SuperAdminPanel() {
     nav("/login");
   }
 
-  const isAdmin = profile?.isAdmin === true;
-  const emailClean = useMemo(() => String(profile?.email || "").trim().toLowerCase(), [profile]);
-  const canSeeSuperAdminPanel = isAdmin && SUPER_ADMIN_EMAILS.has(emailClean);
+  const roleClean = useMemo(() => String(profile?.role || "").trim().toLowerCase(), [profile]);
+  const isAdmin = roleClean === "admin" || roleClean === "superadmin" || profile?.isAdmin === true;
+  const isSuperAdmin = roleClean === "superadmin" || profile?.isSuperAdmin === true;
 
   const fullName = useMemo(() => {
     if (!profile) return "";
@@ -273,9 +267,11 @@ export default function SuperAdminPanel() {
     return `${base}${profile.suffix ? `, ${profile.suffix}` : ""}`;
   }, [profile]);
 
+  // ✅ show new BSRT ID format if present (for the superadmin patient account)
   const idShort = useMemo(() => {
-    if (!profile?._id) return "—";
-    return String(profile._id).slice(-8).toUpperCase();
+    if (profile?.bsrtId) return String(profile.bsrtId).trim();
+    if (profile?._id) return String(profile._id).slice(-8).toUpperCase();
+    return "—";
   }, [profile]);
 
   const filteredAdmins = useMemo(() => {
@@ -286,7 +282,8 @@ export default function SuperAdminPanel() {
       .filter((a) => (showArchived ? true : !a?.isArchived))
       .filter((a) => {
         if (!q) return true;
-        const hay = `${a?.firstName || ""} ${a?.lastName || ""} ${a?.email || ""} ${a?.role || ""}`.toLowerCase();
+        const adminId = a?.bsrtAdminId || a?.bsrtId || "";
+        const hay = `${adminId} ${a?.firstName || ""} ${a?.lastName || ""} ${a?.email || ""} ${a?.role || ""}`.toLowerCase();
         return hay.includes(q);
       });
   }, [admins, search, showArchived]);
@@ -296,16 +293,27 @@ export default function SuperAdminPanel() {
     setInviteResult(null);
 
     const email = String(inviteEmail || "").trim().toLowerCase();
+    const role = String(inviteRole || "admin").trim().toLowerCase();
+
     if (!email) return setMsg("Email is required.");
+    if (!["admin", "superadmin"].includes(role)) return setMsg("Invalid role.");
 
     setInviteSending(true);
     try {
-      const data = await apiPost("/api/admin/invites", { email, expiresInDays: 5 }, token);
+      // ✅ include role so backend reserves BSRTAdmin ID + role in the invite
+      const data = await apiPost("/api/admin/invites", { email, role, expiresInDays: 5 }, token);
 
       const inviteLink = data?.inviteLink || data?.link || "";
       const expiresAt = data?.expiresAt || data?.expires || "";
+      const bsrtAdminId = data?.bsrtAdminId || "";
 
-      setInviteResult({ email, inviteLink, expiresAt });
+      setInviteResult({
+        email,
+        role: data?.role || role,
+        bsrtAdminId,
+        inviteLink,
+        expiresAt,
+      });
 
       if (inviteLink && navigator?.clipboard?.writeText) {
         try {
@@ -409,7 +417,7 @@ export default function SuperAdminPanel() {
     }
   }
 
-  /* ---------- SIDEBAR ITEMS (same as Profile.jsx) ---------- */
+  /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
@@ -418,24 +426,18 @@ export default function SuperAdminPanel() {
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
+  // ✅ No "Super Admin Panel" button in sidebar (you're already here)
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
     { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    ...(canSeeSuperAdminPanel
-      ? [{ label: "Super Admin Panel", to: "/admin/super", IconComp: SuperAdminIcon, exact: true }]
-      : []),
     { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
 
   const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
 
   const isItemActive = (to, exact) => {
-    // ✅ treat /superadmin and /admin/super as same page if you have both routes
-    if (to === "/admin/super") {
-      return loc.pathname === "/admin/super" || loc.pathname === "/superadmin";
-    }
     if (exact) return loc.pathname === to;
     return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
   };
@@ -869,12 +871,21 @@ export default function SuperAdminPanel() {
           <div style={{ color: "#64748b" }}>No profile found.</div>
         ) : (
           <>
-            {/* ✅ Buttons only */}
+            {/* Buttons */}
             <div style={sectionTitle}>Actions</div>
             <p style={sectionSub}>Open the forms using the buttons below.</p>
 
             <div style={{ ...panel, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <button type="button" style={btnPrimary} onClick={() => { setInviteOpen(true); setInviteResult(null); setInviteEmail(""); }}>
+              <button
+                type="button"
+                style={btnPrimary}
+                onClick={() => {
+                  setInviteOpen(true);
+                  setInviteResult(null);
+                  setInviteEmail("");
+                  setInviteRole("admin");
+                }}
+              >
                 Invite New Admin
               </button>
 
@@ -902,7 +913,7 @@ export default function SuperAdminPanel() {
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                 <input
                   style={{ ...input, maxWidth: 360 }}
-                  placeholder="Search name/email/role"
+                  placeholder="Search id/name/email/role"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -916,6 +927,7 @@ export default function SuperAdminPanel() {
               <table style={table}>
                 <thead>
                   <tr>
+                    <th style={th}>Admin ID</th>
                     <th style={th}>Name</th>
                     <th style={th}>Email</th>
                     <th style={th}>Role</th>
@@ -925,27 +937,31 @@ export default function SuperAdminPanel() {
                 </thead>
                 <tbody>
                   {filteredAdmins.length ? (
-                    filteredAdmins.map((a) => (
-                      <tr key={String(a?._id || a?.email)}>
-                        <td style={td}>{`${a?.firstName || ""} ${a?.lastName || ""}`.trim() || "-"}</td>
-                        <td style={{ ...td, wordBreak: "break-all" }}>{a?.email || "-"}</td>
-                        <td style={td}>{a?.role || "admin"}</td>
-                        <td style={td}>{a?.isArchived ? "Archived" : "Active"}</td>
-                        <td style={td}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <button type="button" style={btnOutline} onClick={() => openEdit(a)}>
-                              Edit
-                            </button>
-                            <button type="button" style={btnPrimary} onClick={() => toggleArchive(a)}>
-                              {a?.isArchived ? "Restore" : "Archive"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                    filteredAdmins.map((a) => {
+                      const adminId = a?.bsrtAdminId || a?.bsrtId || "-";
+                      return (
+                        <tr key={String(a?._id || a?.email || adminId)}>
+                          <td style={td}>{adminId}</td>
+                          <td style={td}>{`${a?.firstName || ""} ${a?.lastName || ""}`.trim() || "-"}</td>
+                          <td style={{ ...td, wordBreak: "break-all" }}>{a?.email || "-"}</td>
+                          <td style={td}>{a?.role || "admin"}</td>
+                          <td style={td}>{a?.isArchived ? "Archived" : "Active"}</td>
+                          <td style={td}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button type="button" style={btnOutline} onClick={() => openEdit(a)}>
+                                Edit
+                              </button>
+                              <button type="button" style={btnPrimary} onClick={() => toggleArchive(a)}>
+                                {a?.isArchived ? "Restore" : "Archive"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   ) : (
                     <tr>
-                      <td style={td} colSpan={5}>
+                      <td style={td} colSpan={6}>
                         No admins found.
                       </td>
                     </tr>
@@ -954,7 +970,7 @@ export default function SuperAdminPanel() {
               </table>
             </div>
 
-            {/* ✅ INVITE MODAL */}
+            {/* INVITE MODAL */}
             {inviteOpen ? (
               <div style={modalOverlay} role="dialog" aria-modal="true">
                 <div style={modal}>
@@ -974,8 +990,29 @@ export default function SuperAdminPanel() {
                     disabled={inviteSending}
                   />
 
+                  {/* ✅ Role selector */}
+                  <div style={fieldLabel}>Role</div>
+                  <select
+                    style={select}
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value)}
+                    disabled={inviteSending}
+                  >
+                    <option value="admin">admin</option>
+                    <option value="superadmin">superadmin</option>
+                  </select>
+
                   <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <button type="button" style={btnOutline} onClick={() => { setInviteEmail(""); setInviteResult(null); }} disabled={inviteSending}>
+                    <button
+                      type="button"
+                      style={btnOutline}
+                      onClick={() => {
+                        setInviteEmail("");
+                        setInviteRole("admin");
+                        setInviteResult(null);
+                      }}
+                      disabled={inviteSending}
+                    >
                       Clear
                     </button>
                     <button type="button" style={btnPrimary} onClick={generateInvite} disabled={inviteSending}>
@@ -987,9 +1024,16 @@ export default function SuperAdminPanel() {
                     <div style={{ marginTop: 12, padding: 10, borderRadius: 12, background: "#f8fafc", border: "1px solid #e2e8f0" }}>
                       <div style={{ fontWeight: 900, color: "#0f172a" }}>Invite Details</div>
                       <div style={{ marginTop: 6, fontWeight: 800, color: "#334155" }}>To: {inviteResult.email}</div>
+                      <div style={{ marginTop: 4, fontWeight: 800, color: "#334155" }}>Role: {inviteResult.role}</div>
+                      {inviteResult.bsrtAdminId ? (
+                        <div style={{ marginTop: 4, fontWeight: 800, color: "#334155" }}>
+                          Admin ID: {inviteResult.bsrtAdminId}
+                        </div>
+                      ) : null}
                       <div style={{ marginTop: 4, fontWeight: 800, color: "#334155" }}>
                         Expires: {inviteResult.expiresAt || "5 days"}
                       </div>
+
                       {inviteResult.inviteLink ? (
                         <>
                           <div style={{ marginTop: 8, fontWeight: 900, wordBreak: "break-all" }}>{inviteResult.inviteLink}</div>
@@ -1017,7 +1061,7 @@ export default function SuperAdminPanel() {
               </div>
             ) : null}
 
-            {/* ✅ CREATE MODAL */}
+            {/* CREATE MODAL */}
             {createOpen ? (
               <div style={modalOverlay} role="dialog" aria-modal="true">
                 <div style={modal}>

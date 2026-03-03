@@ -28,6 +28,9 @@ export default function Register() {
   // Put file at: frontend/public/images/background.png
   const FALLBACK_BG = `${import.meta.env.BASE_URL}images/background.png`;
 
+  // ✅ default role for any registration coming from this page
+  const DEFAULT_ROLE = "patient";
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -127,6 +130,9 @@ export default function Register() {
         lastName: form.lastName.trim(),
         email: emailClean,
         password: form.password,
+
+        // ✅ ensure new registrations from this page are patients by default
+        role: DEFAULT_ROLE,
       });
 
       if (!data?.token) throw new Error("Register token missing. Please try again.");
@@ -141,10 +147,7 @@ export default function Register() {
   }
 
   return (
-    <div
-      className="synapse-auth"
-      style={{ backgroundImage: `url("${bgUrl || FALLBACK_BG}")` }}
-    >
+    <div className="synapse-auth" style={{ backgroundImage: `url("${bgUrl || FALLBACK_BG}")` }}>
       {/* Brand at top */}
       <div className="synapse-brand top">
         <div className="synapse-brand-mark" aria-hidden="true">

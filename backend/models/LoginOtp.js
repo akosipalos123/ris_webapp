@@ -1,3 +1,4 @@
+// backend/models/LoginOtp.js
 const mongoose = require("mongoose");
 
 const LoginOtpSchema = new mongoose.Schema(
@@ -10,5 +11,8 @@ const LoginOtpSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// ✅ TTL index: MongoDB auto-deletes document when expiresAt is reached
+LoginOtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.model("LoginOtp", LoginOtpSchema);

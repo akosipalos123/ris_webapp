@@ -159,10 +159,67 @@ function formatBirthdate(birthdate) {
   return d.toLocaleDateString();
 }
 
+function isImageFile(file) {
+  return !!file && typeof file.type === "string" && file.type.startsWith("image/");
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+async function uploadAvatarFile(file, token) {
+  const AVATAR_UPLOAD_ENDPOINT = "/api/upload/avatar";
+
+  const fd = new FormData();
+  fd.append("avatar", file); // ✅ changed from "file" to "avatar"
+
+  const res = await fetch(AVATAR_UPLOAD_ENDPOINT, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    throw new Error(data?.message || `Upload failed (${res.status})`);
+  }
+
+  const url =
+    data?.url ||
+    data?.secure_url ||
+    data?.avatarUrl ||
+    data?.imageUrl ||
+    data?.fileUrl ||
+    data?.path ||
+    data?.location ||
+    "";
+
+  if (!url) throw new Error("Upload succeeded but server did not return an image URL.");
+  return url;
+}
+
 /* ---------- MODAL: EDIT PROFILE (POPUP) ---------- */
 function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+
+  // avatar
+  const fileRef = useRef(null);
+  const [avatarMode, setAvatarMode] = useState("keep"); // keep | new | remove
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState("");
 
   const [form, setForm] = useState({
     firstName: "",
@@ -181,6 +238,17 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
     return String(ageFromBirthdate(form.birthdate));
   }, [form.birthdate]);
 
+  // cleanup object URLs
+  useEffect(() => {
+    return () => {
+      if (avatarPreview && String(avatarPreview).startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(avatarPreview);
+        } catch {}
+      }
+    };
+  }, [avatarPreview]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -188,13 +256,27 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
     setMsg("");
     setSaving(false);
 
+    // reset avatar
+    setAvatarMode("keep");
+    setAvatarFile(null);
+
+    const existing = p.avatarUrl || "/default-avatar.png";
+    // revoke old blob previews
+    setAvatarPreview((prev) => {
+      if (prev && String(prev).startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return existing;
+    });
+
     setForm({
       firstName: p.firstName || "",
       middleName: p.middleName || "",
       lastName: p.lastName || "",
       suffix: p.suffix || "",
       gender: p.gender || "",
-      // ✅ local-safe YYYY-MM-DD for <input type="date">
       birthdate: p.birthdate ? toLocalISODate(new Date(p.birthdate)) : "",
       contactNumber: p.contactNumber || "",
       email: p.email || "",
@@ -217,6 +299,54 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
     setMsg("");
   }
 
+  function onPickAvatar(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // basic validation
+    if (!isImageFile(file)) {
+      setMsg("Please select a valid image file.");
+      return;
+    }
+
+    // keep this conservative; backend limit might be 2MB
+    const MAX = 2 * 1024 * 1024;
+    if (file.size > MAX) {
+      setMsg(`Image too large (${formatBytes(file.size)}). Max is ${formatBytes(MAX)}.`);
+      return;
+    }
+
+    // preview
+    const objUrl = URL.createObjectURL(file);
+
+    setAvatarPreview((prev) => {
+      if (prev && String(prev).startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return objUrl;
+    });
+
+    setAvatarFile(file);
+    setAvatarMode("new");
+    setMsg("");
+  }
+
+  function removeAvatar() {
+    setAvatarFile(null);
+    setAvatarMode("remove");
+
+    setAvatarPreview((prev) => {
+      if (prev && String(prev).startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return "/default-avatar.png";
+    });
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
     const token = localStorage.getItem("token");
@@ -226,6 +356,16 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
       setSaving(true);
       setMsg("");
 
+      // avatar handling (upload first, then save)
+      let avatarUrlToSave = null; // null means "don't touch avatarUrl"
+      if (avatarMode === "remove") {
+        avatarUrlToSave = ""; // clear
+      } else if (avatarMode === "new") {
+        if (!avatarFile) throw new Error("Please select an image file.");
+        const uploadedUrl = await uploadAvatarFile(avatarFile, token);
+        avatarUrlToSave = uploadedUrl;
+      }
+
       const payload = {
         firstName: form.firstName.trim(),
         middleName: form.middleName.trim(),
@@ -234,9 +374,14 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
         gender: form.gender,
         birthdate: form.birthdate ? form.birthdate : null,
         contactNumber: form.contactNumber.trim(),
+
+        // NOTE: your backend must allow these if you want them editable
         email: form.email.trim(),
         address: form.address.trim(),
       };
+
+      // only include avatarUrl when it changed
+      if (avatarUrlToSave !== null) payload.avatarUrl = avatarUrlToSave;
 
       await apiPut("/api/auth/me", token, payload);
 
@@ -263,7 +408,7 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
 
   const modal = {
     width: "min(980px, 94vw)",
-    height: "min(620px, 86vh)",
+    height: "min(680px, 90vh)",
     background: "rgba(0,0,0,.55)",
     borderRadius: 22,
     padding: 18,
@@ -295,6 +440,55 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
     color: "#fff",
     fontWeight: 800,
   };
+
+  const avatarRow = {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    flexWrap: "wrap",
+    marginBottom: 14,
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "2px solid rgba(255,255,255,.35)",
+    background: "rgba(255,255,255,.06)",
+  };
+
+  const avatarBox = {
+    width: 86,
+    height: 86,
+    borderRadius: 999,
+    border: "3px solid rgba(255,255,255,.9)",
+    overflow: "hidden",
+    background: "rgba(255,255,255,.12)",
+  };
+
+  const avatarImg = { width: "100%", height: "100%", objectFit: "cover", display: "block" };
+
+  const avatarBtns = { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" };
+
+  const smallBtn = (disabled) => ({
+    padding: "10px 12px",
+    borderRadius: 999,
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+    background: "#fff",
+    color: "#0f172a",
+    border: "2px solid rgba(255,255,255,.9)",
+    opacity: disabled ? 0.7 : 1,
+  });
+
+  const smallBtnOutline = (disabled) => ({
+    padding: "10px 12px",
+    borderRadius: 999,
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+    background: "transparent",
+    color: "#fff",
+    border: "2px solid rgba(255,255,255,.75)",
+    opacity: disabled ? 0.7 : 1,
+  });
+
+  const avatarHint = { color: "rgba(255,255,255,.75)", fontWeight: 800, fontSize: 12 };
 
   const grid = {
     display: "grid",
@@ -342,6 +536,46 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
         <div style={sub}>Update your information to edit profile</div>
 
         {msg ? <div style={msgBox}>{msg}</div> : null}
+
+        {/* ✅ Avatar section */}
+        <div style={avatarRow}>
+          <div style={avatarBox}>
+            <img src={avatarPreview || "/default-avatar.png"} alt="Avatar preview" style={avatarImg} />
+          </div>
+
+          <div style={{ minWidth: 240, flex: 1 }}>
+            <div style={{ color: "#fff", fontWeight: 900, fontSize: 14 }}>Profile Picture</div>
+            <div style={avatarHint}>PNG/JPG recommended • Max 2MB</div>
+            <div style={{ height: 10 }} />
+            <div style={avatarBtns}>
+              <button
+                type="button"
+                style={smallBtn(saving)}
+                disabled={saving}
+                onClick={() => fileRef.current?.click()}
+              >
+                Choose Photo
+              </button>
+
+              <button type="button" style={smallBtnOutline(saving)} disabled={saving} onClick={removeAvatar}>
+                Remove
+              </button>
+
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                onChange={onPickAvatar}
+                disabled={saving}
+                style={{ display: "none" }}
+              />
+
+              <div style={{ color: "rgba(255,255,255,.85)", fontWeight: 900, fontSize: 12 }}>
+                {avatarMode === "new" ? "New photo selected" : avatarMode === "remove" ? "Photo will be removed" : "No changes"}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <form onSubmit={onSubmit}>
           <div style={grid}>
@@ -505,7 +739,6 @@ function ChangePasswordModal({ open, onClose, onChanged }) {
 
   if (!open) return null;
 
-  // NOTE: we use ABSOLUTE overlay style; parent main has position:relative
   const overlay = {
     position: "absolute",
     inset: 0,
@@ -640,7 +873,7 @@ function ChangePasswordModal({ open, onClose, onChanged }) {
   );
 }
 
-/* ---------- PAGE: PATIENT / ADMIN INFORMATION (THIS FILE) ---------- */
+/* ---------- PAGE: EDIT PROFILE ---------- */
 export default function EditProfile() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -649,7 +882,6 @@ export default function EditProfile() {
   const [msg, setMsg] = useState("");
   const [profile, setProfile] = useState(null);
 
-  // sidebar / dropdown / modals
   const [sideOpen, setSideOpen] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -657,7 +889,6 @@ export default function EditProfile() {
 
   const menuRef = useRef(null);
 
-  // mobile: auto-collapse sidebar
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 900px)");
     const apply = () => setSideOpen(!mq.matches);
@@ -689,7 +920,6 @@ export default function EditProfile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // close dropdown on outside click / ESC
   useEffect(() => {
     if (!menuOpen) return;
 
@@ -712,6 +942,9 @@ export default function EditProfile() {
   function logout() {
     setMenuOpen(false);
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
+    localStorage.removeItem("adminEmail");
     nav("/login");
   }
 
@@ -719,6 +952,11 @@ export default function EditProfile() {
     if (!profile?._id) return "—";
     return String(profile._id).slice(-8).toUpperCase();
   }, [profile]);
+
+  const displayId = useMemo(() => {
+    const bsrt = String(profile?.bsrtId || profile?.bsrtAdminId || "").trim();
+    return bsrt || userIdShort;
+  }, [profile, userIdShort]);
 
   const fullName = useMemo(() => {
     if (!profile) return "-";
@@ -733,14 +971,14 @@ export default function EditProfile() {
     return a === "-" ? "-" : `${a} years old`;
   }, [profile]);
 
-  /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
-  const isAdmin = profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
+  const roleClean = useMemo(() => String(profile?.role || profile?.userType || "").trim().toLowerCase(), [profile]);
+  const isSuperAdmin = roleClean === "superadmin";
+  const isAdmin = roleClean === "admin" || roleClean === "superadmin" || profile?.isAdmin === true;
 
-  // ✅ dynamic title/labels (shared page)
-  const pageTitle = isAdmin ? "Admin Information" : "Patient Information";
-  const idLabel = isAdmin ? "Admin ID" : "Patient ID";
+  const pageTitle = isAdmin ? (isSuperAdmin ? "Superadmin Information" : "Admin Information") : "Patient Information";
+  const idLabel = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
 
-  /* ---------- STYLES (match attached design) ---------- */
+  /* ---------- STYLES ---------- */
   const DARK = "#0b3d2e";
   const BG = "#ffffff";
 
@@ -844,7 +1082,7 @@ export default function EditProfile() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "0 24px 16px", // ✅ no top white space
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
@@ -854,7 +1092,7 @@ export default function EditProfile() {
 
   const topbar = {
     height: 84,
-    borderRadius: "0 0 22px 22px", // ✅ flush to top
+    borderRadius: "0 0 22px 22px",
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",
@@ -1017,7 +1255,7 @@ export default function EditProfile() {
     border: `2px solid ${DARK}`,
   };
 
-  /* ---------- SIDEBAR ITEMS (PATIENT vs ADMIN) ---------- */
+  /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
@@ -1026,13 +1264,12 @@ export default function EditProfile() {
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
-  // ✅ aligned with your current App.jsx routes
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon }, // admin can book here
+    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true }, // this page
+    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
 
   const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
@@ -1131,7 +1368,7 @@ export default function EditProfile() {
           <div style={rightTop} ref={menuRef}>
             <div style={patientIdWrap}>
               <div style={patientIdLabel}>{idLabel}</div>
-              <div style={patientIdValue}>{userIdShort}</div>
+              <div style={patientIdValue}>{displayId}</div>
             </div>
 
             <button
@@ -1150,7 +1387,7 @@ export default function EditProfile() {
               <div style={dropdown} role="menu" aria-label="Account menu">
                 <div style={ddName}>{fullName}</div>
                 <div style={ddSub}>{idLabel}</div>
-                <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{userIdShort}</div>
+                <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{displayId}</div>
 
                 <div style={ddDivider} />
 
@@ -1217,7 +1454,7 @@ export default function EditProfile() {
 
                     <div>
                       <div style={label}>{idLabel}</div>
-                      <div style={smallValue}>{userIdShort}</div>
+                      <div style={smallValue}>{displayId}</div>
                     </div>
 
                     <div>

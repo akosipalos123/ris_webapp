@@ -11,24 +11,33 @@ import BookAppointment from "./pages/BookAppointment.jsx";
 import AdminAppointments from "./pages/AdminAppointments.jsx";
 import AdminDataRecords from "./pages/AdminDataRecords.jsx";
 
-// ✅ NEW: Admin invite registration page
+// ✅ Admin invite registration page (PUBLIC)
 import AdminRegister from "./pages/AdminRegister.jsx";
 
-// NEW PAGES (make sure these files exist)
+// Patient pages
 import MyBills from "./pages/MyBills.jsx";
 import DiagnosticImages from "./pages/DiagnosticImages.jsx";
 import DiagnosticResults from "./pages/DiagnosticResults.jsx";
 import Radiographs from "./pages/Radiographs.jsx";
 import ReportView from "./pages/ReportView.jsx";
 
-// ✅ NEW: Super Admin Panel page
+// ✅ Super Admin Panel
 import SuperAdminPanel from "./pages/SuperAdminPanel.jsx";
 
-// ✅ ONLY THESE EMAILS CAN ACCESS superadmin panel
-const SUPER_ADMIN_EMAILS = new Set(
-  ["rondelserrano1@gmail.com", "cambsrt.slsu@gmail.com"].map((e) => e.toLowerCase())
-);
+/* ---------------- Helpers ---------------- */
+function getRoleClean(me) {
+  return String(me?.role || me?.userType || "").trim().toLowerCase();
+}
+function isAdminRole(me) {
+  const r = getRoleClean(me);
+  return r === "admin" || r === "superadmin";
+}
+function isSuperAdminRole(me) {
+  const r = getRoleClean(me);
+  return r === "superadmin";
+}
 
+/* ---------------- Guards ---------------- */
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem("token");
   if (!token) return <Navigate to="/login" replace />;
@@ -49,7 +58,7 @@ function AdminRoute({ children }) {
       }
       try {
         const me = await apiGet("/api/auth/me", token);
-        if (mounted) setState({ loading: false, ok: !!me?.isAdmin });
+        if (mounted) setState({ loading: false, ok: isAdminRole(me) });
       } catch {
         if (mounted) setState({ loading: false, ok: false });
       }
@@ -69,11 +78,10 @@ function AdminRoute({ children }) {
   }
 
   if (!state.ok) return <Navigate to="/profile" replace />;
-
   return children;
 }
 
-/** ✅ Superadmin-only route (ONLY 2 emails) */
+/** ✅ Superadmin-only route (role === superadmin) */
 function SuperAdminRoute({ children }) {
   const [state, setState] = useState({ loading: true, ok: false, error: false });
 
@@ -89,9 +97,7 @@ function SuperAdminRoute({ children }) {
 
       try {
         const me = await apiGet("/api/auth/me", token);
-        const email = String(me?.email || "").trim().toLowerCase();
-
-        const ok = !!me?.isAdmin && SUPER_ADMIN_EMAILS.has(email);
+        const ok = isSuperAdminRole(me);
         if (mounted) setState({ loading: false, ok, error: false });
       } catch {
         if (mounted) setState({ loading: false, ok: false, error: true });
@@ -113,11 +119,10 @@ function SuperAdminRoute({ children }) {
 
   if (state.error) return <Navigate to="/login" replace />;
   if (!state.ok) return <Navigate to="/profile" replace />;
-
   return children;
 }
 
-/** ✅ Patient-only route (blocks admins) */
+/** ✅ Patient-only route (role === patient) */
 function PatientRoute({ children }) {
   const [state, setState] = useState({ loading: true, ok: false, error: false });
 
@@ -132,8 +137,8 @@ function PatientRoute({ children }) {
       }
       try {
         const me = await apiGet("/api/auth/me", token);
-        // patient-only means NOT admin
-        if (mounted) setState({ loading: false, ok: !me?.isAdmin, error: false });
+        const ok = !isAdminRole(me); // patient-only means NOT admin/superadmin
+        if (mounted) setState({ loading: false, ok, error: false });
       } catch {
         if (mounted) setState({ loading: false, ok: false, error: true });
       }
@@ -154,13 +159,13 @@ function PatientRoute({ children }) {
 
   if (state.error) return <Navigate to="/login" replace />;
 
-  // if admin tries to access patient-only pages, send them to admin area
+  // if admin tries patient-only pages, send them to admin area
   if (!state.ok) return <Navigate to="/admin/appointments" replace />;
 
   return children;
 }
 
-// ✅ smart landing route (root decides where to go)
+/* ---------------- Root Redirect ---------------- */
 function RootRedirect() {
   const [dest, setDest] = useState(null);
 
@@ -209,8 +214,11 @@ export default function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
 
-        {/* ✅ Public invite-based admin registration */}
-        <Route path="/admin/register" element={<AdminRegister />} />
+        {/* ✅ Public invite-based admin registration (matches your invite link) */}
+        <Route path="/admin-register" element={<AdminRegister />} />
+
+        {/* ✅ Backwards/alternate path alias */}
+        <Route path="/admin/register" element={<Navigate to="/admin-register" replace />} />
 
         {/* Shared protected routes */}
         <Route
@@ -242,7 +250,7 @@ export default function App() {
         />
         <Route path="/appointments/book" element={<Navigate to="/appointments" replace />} />
 
-        {/* ✅ SUPERADMIN PANEL (real route) */}
+        {/* ✅ SUPERADMIN PANEL */}
         <Route
           path="/admin/super"
           element={
@@ -256,7 +264,7 @@ export default function App() {
           }
         />
 
-        {/* ✅ alias for old direct link */}
+        {/* alias for old direct link */}
         <Route path="/superadmin" element={<Navigate to="/admin/super" replace />} />
 
         {/* ✅ PATIENT-ONLY PAGES */}

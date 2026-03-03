@@ -1,3 +1,4 @@
+// frontend/src/pages/AdminRegister.jsx
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiPost } from "../api";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -15,8 +16,18 @@ export default function AdminRegister() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
-  const [invite, setInvite] = useState(null); // { email, expiresAt }
+  // expected invite shape from backend:
+  // { email, expiresAt, role, bsrtId }
+  const [invite, setInvite] = useState(null);
+
   const invitedEmail = useMemo(() => String(invite?.email || ""), [invite]);
+  const invitedRole = useMemo(() => String(invite?.role || "admin"), [invite]);
+
+  // ✅ support both keys (old: bsrtAdminId, new: bsrtId)
+  const invitedBsrtId = useMemo(
+    () => String(invite?.bsrtId || invite?.bsrtAdminId || ""),
+    [invite]
+  );
 
   const [form, setForm] = useState({
     firstName: "",
@@ -25,7 +36,7 @@ export default function AdminRegister() {
     confirmPassword: "",
   });
 
-  // background config (same pattern as Login/Register)
+  // background config
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -48,9 +59,9 @@ export default function AdminRegister() {
     (async () => {
       setMsg("");
 
-      // if already logged in, just go to admin
+      // ✅ only auto-redirect if there's NO invite token in the URL
       const adminToken = localStorage.getItem("adminToken");
-      if (adminToken) return nav("/admin");
+      if (adminToken && !token) return nav("/admin");
 
       if (!token) {
         setMsg("Missing invite token.");
@@ -101,7 +112,7 @@ export default function AdminRegister() {
         throw new Error("Passwords do not match.");
       }
 
-      // ✅ Backend should implement this endpoint
+      // ✅ backend enforces role + bsrtId from invite
       const data = await apiPost("/api/admin/auth/register", {
         token,
         firstName: form.firstName.trim(),
@@ -109,16 +120,18 @@ export default function AdminRegister() {
         password: form.password,
       });
 
-      // If backend returns admin token, log in immediately
       if (data?.token) {
-        localStorage.removeItem("token"); // prevent mixed sessions
+        // ✅ Option A: keep one-session approach for the app
+        localStorage.setItem("token", data.token);
+
+        // optional legacy keys (won't hurt)
         localStorage.setItem("adminToken", data.token);
-        localStorage.setItem("adminRole", data.user?.role || "admin");
+        localStorage.setItem("adminRole", data.user?.role || invitedRole || "admin");
         localStorage.setItem("adminEmail", data.user?.email || invitedEmail);
+
         return nav("/admin");
       }
 
-      // otherwise redirect to login
       nav("/login");
     } catch (err) {
       setMsg(err.message || "Registration failed.");
@@ -142,9 +155,7 @@ export default function AdminRegister() {
         <h1 className="synapse-title" style={{ fontSize: 40 }}>
           Admin Registration
         </h1>
-        <div className="synapse-subtitle">
-          Create your admin account using the invitation link.
-        </div>
+        <div className="synapse-subtitle">Create your admin account using the invitation link.</div>
 
         {msg ? <div className="synapse-alert">{msg}</div> : null}
 
@@ -159,15 +170,20 @@ export default function AdminRegister() {
         ) : (
           <form onSubmit={onSubmit} className="synapse-form" style={{ width: "100%" }}>
             <label className="synapse-label">Invited Email</label>
-            <input
-              className="synapse-input"
-              value={invitedEmail}
-              disabled
-              style={{ background: "#f8fafc" }}
-            />
+            <input className="synapse-input" value={invitedEmail} disabled style={{ background: "#f8fafc" }} />
+
+            <label className="synapse-label" style={{ marginTop: 10 }}>
+              Invited Role
+            </label>
+            <input className="synapse-input" value={invitedRole} disabled style={{ background: "#f8fafc" }} />
+
+            <label className="synapse-label" style={{ marginTop: 10 }}>
+              Admin ID
+            </label>
+            <input className="synapse-input" value={invitedBsrtId || "-"} disabled style={{ background: "#f8fafc" }} />
+
             <div className="synapse-help">
-              Expires:{" "}
-              {invite?.expiresAt ? new Date(invite.expiresAt).toLocaleString() : "5 days"}
+              Expires: {invite?.expiresAt ? new Date(invite.expiresAt).toLocaleString() : "5 days"}
             </div>
 
             <div className="synapse-grid-2" style={{ marginTop: 12 }}>

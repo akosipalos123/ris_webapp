@@ -7,9 +7,9 @@ const crypto = require("crypto");
 const Patient = require("../models/Patient");
 const RegisterOtp = require("../models/RegisterOtp");
 const LoginOtp = require("../models/LoginOtp"); // ✅ NEW model (add this file)
+const Counter = require("../models/Counter");   // ✅ NEW model for BSRT sequence
 
 const { sendOtpEmail } = require("../utils/mailer");
-const { isAdminEmail } = require("../utils/admin");
 
 const router = express.Router();
 
@@ -55,6 +55,20 @@ function requireAuth(req, res, next) {
 }
 
 /**
+ * ✅ BSRT ID generator (atomic, safe for concurrent signups)
+ * Returns "BSRT00000001", "BSRT00000002", ...
+ */
+async function nextBsrtId() {
+  const c = await Counter.findByIdAndUpdate(
+    { _id: "patients" },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+
+  return `BSRT${String(c.seq).padStart(8, "0")}`;
+}
+
+/**
  * ✅ STEP 1: POST /api/auth/login-otp
  * Validates email+password then sends OTP
  */
@@ -69,7 +83,7 @@ router.post("/login-otp", async (req, res) => {
     }
 
     const patient = await Patient.findOne({ email }).select("+passwordHash");
-    if (!patient || !patient.isActive) {
+    if (!patient || !patient.isActive || patient.isArchived) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
@@ -127,7 +141,7 @@ router.post("/login-otp", async (req, res) => {
 /**
  * ✅ POST /api/auth/login
  * Supports:
- *  - OTP verify: { otpToken, otp, keepSignedIn }  ✅ used by your OTP login flow
+ *  - OTP verify: { otpToken, otp, keepSignedIn }
  *  - Legacy: { email, password } (optional fallback)
  */
 router.post("/login", async (req, res) => {
@@ -177,7 +191,7 @@ router.post("/login", async (req, res) => {
 
       // ensure user still exists/active
       const patient = await Patient.findOne({ email });
-      if (!patient || !patient.isActive) {
+      if (!patient || !patient.isActive || patient.isArchived) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
@@ -193,7 +207,7 @@ router.post("/login", async (req, res) => {
     }
 
     const patient = await Patient.findOne({ email }).select("+passwordHash");
-    if (!patient || !patient.isActive) return res.status(401).json({ message: "Invalid credentials" });
+    if (!patient || !patient.isActive || patient.isArchived) return res.status(401).json({ message: "Invalid credentials" });
 
     const ok = await bcrypt.compare(password, patient.passwordHash);
     if (!ok) return res.status(401).json({ message: "Invalid credentials" });
@@ -266,6 +280,8 @@ router.post("/register-otp", async (req, res) => {
 /**
  * ✅ STEP 2: POST /api/auth/register
  * Requires otpToken + otp + user fields
+ * ✅ Forces role="patient"
+ * ✅ Generates bsrtId like BSRT00000001
  */
 router.post("/register", async (req, res) => {
   try {
@@ -304,7 +320,11 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "Email mismatch. Please resend OTP." });
     }
 
-    if (!password || !firstName || !lastName) {
+    const fn = String(firstName || "").trim();
+    const ln = String(lastName || "").trim();
+    const pw = String(password || "");
+
+    if (!pw || !fn || !ln) {
       return res.status(400).json({ message: "firstName, lastName, and password are required" });
     }
 
@@ -332,18 +352,30 @@ router.post("/register", async (req, res) => {
     }
 
     // OTP valid → create user
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(pw, 12);
+
+    // ✅ generate BSRT formatted ID (do this only after OTP is verified)
+    const bsrtId = await nextBsrtId();
 
     const patient = await Patient.create({
       email: emailClean,
       passwordHash,
-      firstName,
-      lastName,
+      firstName: fn,
+      lastName: ln,
       middleName,
       suffix,
       gender,
       birthdate,
       contactNumber,
+
+      // ✅ enforce default role for normal registration
+      role: "patient",
+
+      // ✅ store formatted ID
+      bsrtId,
+
+      // ✅ keep consistent for SuperAdminPanel
+      isArchived: false,
     });
 
     // delete OTP record after success
@@ -361,9 +393,13 @@ router.get("/me", requireAuth, async (req, res) => {
   const patient = await Patient.findById(req.userId).lean();
   if (!patient) return res.status(404).json({ message: "Not found" });
 
+  const role = String(patient.role || "patient").trim().toLowerCase();
+
   return res.json({
     ...patient,
-    isAdmin: isAdminEmail(patient.email),
+    // ✅ derived flags for convenience (do NOT rely on ADMIN_EMAILS anymore)
+    isAdmin: role === "admin" || role === "superadmin",
+    isSuperAdmin: role === "superadmin",
   });
 });
 
@@ -378,6 +414,8 @@ router.put("/me", requireAuth, async (req, res) => {
       "gender",
       "birthdate",
       "contactNumber",
+      "avatarUrl",
+      "address",
     ];
 
     const update = {};

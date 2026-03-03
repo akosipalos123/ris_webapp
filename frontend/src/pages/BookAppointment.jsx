@@ -574,8 +574,9 @@ export default function BookAppointment() {
   }
 
   const patientIdShort = useMemo(() => {
-    if (!profile?._id) return "—";
-    return String(profile._id).slice(-8).toUpperCase();
+    if (profile?.bsrtId) return String(profile.bsrtId).trim();
+    if (profile?._id) return String(profile._id).slice(-8).toUpperCase();
+    return "—";
   }, [profile]);
 
   const fullName = useMemo(() => {

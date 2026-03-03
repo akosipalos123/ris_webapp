@@ -6,11 +6,19 @@ const adminInviteSchema = new mongoose.Schema(
     email: { type: String, required: true, lowercase: true, trim: true, index: true },
     tokenHash: { type: String, required: true, unique: true, index: true },
 
-    // ✅ remove index:true here (TTL index below already creates an index)
+    // TTL field
     expiresAt: { type: Date, required: true },
 
     usedAt: { type: Date, default: null, index: true },
-    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+
+    // ✅ Option A: creator is a Patient
+    createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
+
+    // ✅ NEW: role reserved on invite
+    role: { type: String, enum: ["admin", "superadmin"], default: "admin", index: true },
+
+    // ✅ NEW: reserved BSRT Admin ID for the invited admin
+    bsrtId: { type: String, required: true, index: true },
   },
   { timestamps: true }
 );

@@ -3,12 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
-/* ✅ ONLY THESE EMAILS SEE "SUPER ADMIN PANEL" */
-const SUPER_ADMIN_EMAILS = new Set([
-  "rondelserrano1@gmail.com",
-  "cambsrt.slsu@gmail.com",
-]);
-
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
   return (
@@ -236,9 +230,11 @@ export default function Profile() {
     return `${base}${profile.suffix ? `, ${profile.suffix}` : ""}`;
   }, [profile]);
 
+
   const patientIdShort = useMemo(() => {
-    if (!profile?._id) return "—";
-    return String(profile._id).slice(-8).toUpperCase();
+  if (profile?.bsrtId) return String(profile.bsrtId).trim();
+  if (profile?._id) return String(profile._id).slice(-8).toUpperCase();
+  return "—";
   }, [profile]);
 
   const birthdateText = useMemo(() => {
@@ -249,11 +245,17 @@ export default function Profile() {
   }, [profile]);
 
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
-  const isAdmin = profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
+  // Source of truth: role in MongoDB
+  const roleClean = useMemo(() => String(profile?.role || profile?.userType || "").trim().toLowerCase(), [profile]);
 
-  // ✅ Button is only visible if ADMIN AND email is in allow-list (2 emails)
-  const emailClean = useMemo(() => String(profile?.email || "").trim().toLowerCase(), [profile]);
-  const canSeeSuperAdminPanel = isAdmin && SUPER_ADMIN_EMAILS.has(emailClean);
+  // Admin UI if role is admin OR superadmin (fallback: legacy boolean if backend returns it)
+  const isAdmin = roleClean === "admin" || roleClean === "superadmin" || profile?.isAdmin === true;
+
+  // Super admin ONLY when role is exactly superadmin
+  const isSuperAdmin = roleClean === "superadmin";
+
+  // ✅ Super Admin Panel button only for superadmin
+  const canSeeSuperAdminPanel = isSuperAdmin;
 
   /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
@@ -264,14 +266,12 @@ export default function Profile() {
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
+  // ✅ No Super Admin Panel in sidebar
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
     { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    ...(canSeeSuperAdminPanel
-      ? [{ label: "Super Admin Panel", to: "/admin/super", IconComp: SuperAdminIcon, exact: true }]
-      : []),
     { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
 
@@ -488,7 +488,7 @@ export default function Profile() {
   const rightTop = { display: "flex", alignItems: "center", gap: 12, position: "relative" };
   const patientIdWrap = { textAlign: "right", lineHeight: 1.1 };
 
-  const idLabelText = isAdmin ? (canSeeSuperAdminPanel ? "Superadmin ID" : "Admin ID") : "Patient ID";
+  const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
   const patientIdLabel = { fontSize: 14, fontWeight: 800 };
   const patientIdValue = { fontSize: 12, opacity: 0.9 };
 
@@ -674,7 +674,7 @@ export default function Profile() {
                   </Link>
                 </div>
 
-                {/* Optional: show link inside dropdown too (only for 2 emails) */}
+                {/* ✅ Super Admin Panel link only for role=superadmin */}
                 {canSeeSuperAdminPanel ? (
                   <>
                     <div style={ddDivider} />
@@ -788,27 +788,6 @@ export default function Profile() {
                     >
                       Edit Profile
                     </Link>
-
-                    {/* ✅ SUPER ADMIN PANEL BUTTON (ONLY 2 EMAILS) */}
-                    {canSeeSuperAdminPanel ? (
-                      <Link
-                        to="/admin/super"
-                        style={{
-                          textDecoration: "none",
-                          border: `2px solid ${DARK}`,
-                          color: DARK,
-                          padding: "8px 12px",
-                          borderRadius: 12,
-                          fontWeight: 900,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <SuperAdminIcon size={18} />
-                        Super Admin Panel
-                      </Link>
-                    ) : null}
                   </div>
                 </div>
               </div>

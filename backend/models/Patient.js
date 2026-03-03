@@ -1,7 +1,23 @@
+// backend/models/Patient.js
 const mongoose = require("mongoose");
 
 const patientSchema = new mongoose.Schema(
   {
+    // ✅ NEW: human-friendly ID for all users (patients/admins/superadmins)
+    bsrtId: { type: String, unique: true, index: true, default: "" },
+
+    // ✅ NEW: single-table RBAC (patient/admin/superadmin)
+    role: {
+      type: String,
+      enum: ["patient", "admin", "superadmin"],
+      default: "patient",
+      index: true,
+      trim: true,
+    },
+
+    // ✅ NEW: for admin management (archive/restore)
+    isArchived: { type: Boolean, default: false, index: true },
+
     firstName: { type: String, required: true, trim: true },
     middleName: { type: String, trim: true, default: "" },
     lastName: { type: String, required: true, trim: true },
@@ -18,9 +34,7 @@ const patientSchema = new mongoose.Schema(
       type: Date,
       validate: {
         validator: function (v) {
-          // Allow empty birthdate
           if (!v) return true;
-          // Must not be in the future
           return v <= new Date();
         },
         message: "Birthdate cannot be in the future.",
@@ -29,7 +43,6 @@ const patientSchema = new mongoose.Schema(
 
     contactNumber: { type: String, trim: true, default: "" },
 
-    // Store only the URL (recommended). Upload the file to Cloudinary/S3/etc.
     avatarUrl: { type: String, trim: true, default: "" },
 
     email: {
@@ -42,12 +55,11 @@ const patientSchema = new mongoose.Schema(
 
     passwordHash: { type: String, required: true, select: false },
 
-    // ===== Login OTP fields (2-step login) =====
+    // Login OTP fields
     loginOtpHash: { type: String, select: false },
     loginOtpExpiresAt: { type: Date, select: false },
     loginOtpLastSentAt: { type: Date, select: false },
     loginOtpAttempts: { type: Number, default: 0, select: false },
-    // ==========================================
 
     isActive: { type: Boolean, default: true },
   },

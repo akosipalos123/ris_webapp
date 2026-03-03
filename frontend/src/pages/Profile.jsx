@@ -133,6 +133,31 @@ function ageFromBirthdate(birthdate) {
   return age;
 }
 
+function toDateObj(a) {
+  if (a?.date) {
+    const d = new Date(a.date);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (a?.year && a?.month && a?.day) {
+    const dt = new Date(Number(a.year), Number(a.month) - 1, Number(a.day));
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+  return null;
+}
+
+function safeTime(v) {
+  const d = v instanceof Date ? v : new Date(v);
+  const t = d.getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function fmtShort(d) {
+  if (!d) return "";
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toLocaleDateString();
+}
+
 export default function Profile() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -230,11 +255,10 @@ export default function Profile() {
     return `${base}${profile.suffix ? `, ${profile.suffix}` : ""}`;
   }, [profile]);
 
-
   const patientIdShort = useMemo(() => {
-  if (profile?.bsrtId) return String(profile.bsrtId).trim();
-  if (profile?._id) return String(profile._id).slice(-8).toUpperCase();
-  return "—";
+    if (profile?.bsrtId) return String(profile.bsrtId).trim();
+    if (profile?._id) return String(profile._id).slice(-8).toUpperCase();
+    return "—";
   }, [profile]);
 
   const birthdateText = useMemo(() => {
@@ -256,6 +280,99 @@ export default function Profile() {
 
   // ✅ Super Admin Panel button only for superadmin
   const canSeeSuperAdminPanel = isSuperAdmin;
+
+  /* ---------- UPDATES (patient-side appointment/account changes) ---------- */
+  const updates = useMemo(() => {
+    const list = [];
+
+    // Profile change (best-effort; uses updatedAt if backend returns it)
+    if (profile?.updatedAt) {
+      const at = new Date(profile.updatedAt);
+      list.push({
+        at,
+        key: `profile-${safeTime(at)}`,
+        type: "profile",
+        title: "Account updated",
+        detail: "Your profile information was updated.",
+        cta: { to: "/profile/edit", label: "Review" },
+      });
+    }
+
+    // Appointment status changes (best-effort; without history we infer from current status + updatedAt)
+    for (const a of Array.isArray(appointments) ? appointments : []) {
+      const status = String(a?.status || "Pending").trim();
+      const proc = String(a?.procedure || "Appointment").trim() || "Appointment";
+      const sched = toDateObj(a);
+      const schedText = sched ? fmtShort(sched) : "-";
+
+      const at = new Date(a?.updatedAt || a?.createdAt || Date.now());
+
+      // Completed in your flow implies PDF+notes were uploaded, so "Result ready" is safe here.
+      if (status === "Completed") {
+        list.push({
+          at,
+          key: `appt-${String(a?._id || proc)}-${safeTime(at)}-completed`,
+          type: "appt",
+          title: "Result ready",
+          detail: `${proc} (${schedText}) has been completed. Your results are available in Diagnostic Results.`,
+          cta: { to: "/diagnostic-results", label: "View results" },
+        });
+        continue;
+      }
+
+      if (status === "Approved") {
+        list.push({
+          at,
+          key: `appt-${String(a?._id || proc)}-${safeTime(at)}-approved`,
+          type: "appt",
+          title: "Appointment approved",
+          detail: `${proc} (${schedText}) has been approved.`,
+          cta: { to: "/appointments", label: "View appointments" },
+        });
+        continue;
+      }
+
+      if (status === "Rejected") {
+        list.push({
+          at,
+          key: `appt-${String(a?._id || proc)}-${safeTime(at)}-rejected`,
+          type: "appt",
+          title: "Appointment rejected",
+          detail: `${proc} (${schedText}) was rejected.`,
+          cta: { to: "/appointments", label: "View" },
+        });
+        continue;
+      }
+
+      if (status === "Cancelled") {
+        list.push({
+          at,
+          key: `appt-${String(a?._id || proc)}-${safeTime(at)}-cancelled`,
+          type: "appt",
+          title: "Appointment cancelled",
+          detail: `${proc} (${schedText}) was cancelled.`,
+          cta: { to: "/appointments", label: "View" },
+        });
+        continue;
+      }
+
+      // Pending (default)
+      list.push({
+        at,
+        key: `appt-${String(a?._id || proc)}-${safeTime(at)}-pending`,
+        type: "appt",
+        title: "Appointment requested",
+        detail: `${proc} (${schedText}) is pending approval.`,
+        cta: { to: "/appointments", label: "View" },
+      });
+    }
+
+    // sort newest first
+    list.sort((x, y) => safeTime(y.at) - safeTime(x.at));
+    return list;
+  }, [profile, appointments]);
+
+  const updatesTop = useMemo(() => updates.slice(0, 6), [updates]);
 
   /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
@@ -484,6 +601,10 @@ export default function Profile() {
     fontWeight: 800,
     lineHeight: 1.55,
   };
+
+  const updateItemTitle = { fontWeight: 900, color: "#0f172a" };
+  const updateItemMeta = { fontSize: 12, fontWeight: 900, color: "#334155", marginRight: 6 };
+  const updateItemLink = { marginLeft: 8, fontSize: 12, fontWeight: 900, color: DARK, textDecoration: "underline" };
 
   const rightTop = { display: "flex", alignItems: "center", gap: 12, position: "relative" };
   const patientIdWrap = { textAlign: "right", lineHeight: 1.1 };
@@ -798,12 +919,22 @@ export default function Profile() {
 
                 <div style={panel}>
                   <ul style={updatesList}>
-                    <li>xx</li>
-                    <li>xx</li>
-                    <li>xx</li>
-                    <li>xx</li>
-                    <li>xx</li>
-                    <li>xx</li>
+                    {updatesTop.length ? (
+                      updatesTop.map((u) => (
+                        <li key={u.key} style={{ marginBottom: 10 }}>
+                          <span style={updateItemMeta}>{fmtShort(u.at)}</span>
+                          <span style={updateItemTitle}>{u.title}:</span>{" "}
+                          <span>{u.detail}</span>
+                          {u?.cta?.to ? (
+                            <Link to={u.cta.to} style={updateItemLink}>
+                              {u.cta.label || "Open"}
+                            </Link>
+                          ) : null}
+                        </li>
+                      ))
+                    ) : (
+                      <li>No updates yet.</li>
+                    )}
                   </ul>
                 </div>
               </div>

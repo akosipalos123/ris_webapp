@@ -6,20 +6,30 @@ const Appointment = require("../models/Appointment");
 
 const router = express.Router();
 
-// Middleware: require login
+// Middleware: require login (PATIENT token)
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const [type, token] = header.split(" ");
 
   if (type !== "Bearer" || !token) {
-    return res
-      .status(401)
-      .json({ message: "Missing or invalid Authorization header" });
+    return res.status(401).json({ message: "Missing or invalid Authorization header" });
   }
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
+
+    // ✅ Block admin JWT from patient-only routes (admin tokens have typ:"admin")
+    if (payload?.typ && String(payload.typ).toLowerCase() === "admin") {
+      return res.status(401).json({ message: "Invalid token type" });
+    }
+
     req.userId = payload.sub;
+
+    // ✅ Prevent bad writes / broken queries
+    if (!mongoose.Types.ObjectId.isValid(String(req.userId))) {
+      return res.status(401).json({ message: "Invalid token subject" });
+    }
+
     next();
   } catch {
     return res.status(401).json({ message: "Invalid or expired token" });
@@ -53,12 +63,7 @@ const ALLOWED_STATUSES = ["Pending", "Approved", "Cancelled", "Completed", "Reje
 function isValidYMD(y, m, d) {
   if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
   const dt = new Date(y, m - 1, d);
-  return (
-    !Number.isNaN(dt.getTime()) &&
-    dt.getFullYear() === y &&
-    dt.getMonth() === m - 1 &&
-    dt.getDate() === d
-  );
+  return !Number.isNaN(dt.getTime()) && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
 }
 
 function isPastDate(y, m, d) {
@@ -98,9 +103,7 @@ router.get("/availability", requireAuth, async (req, res) => {
 
     const [y, m, d] = String(date).split("-").map(Number);
     if (!isValidYMD(y, m, d)) {
-      return res
-        .status(400)
-        .json({ message: "Invalid date format (YYYY-MM-DD required)" });
+      return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD required)" });
     }
 
     const limit = DAILY_LIMITS[procedure] ?? 0;
@@ -119,13 +122,11 @@ router.get("/availability", requireAuth, async (req, res) => {
       procedure,
       date: fmtYMD(y, m, d),
       limit,
-      used, // Pending + Approved
+      used,
       remaining,
     });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ message: "Availability check failed", error: err.message });
+    return res.status(500).json({ message: "Availability check failed", error: err.message });
   }
 });
 
@@ -135,9 +136,7 @@ router.post("/", requireAuth, async (req, res) => {
     const { procedure, year, month, day } = req.body;
 
     if (!procedure || year === undefined || month === undefined || day === undefined) {
-      return res
-        .status(400)
-        .json({ message: "procedure, year, month, day are required" });
+      return res.status(400).json({ message: "procedure, year, month, day are required" });
     }
 
     if (!ALLOWED_PROCEDURES.includes(procedure)) {
@@ -153,17 +152,18 @@ router.post("/", requireAuth, async (req, res) => {
     }
 
     if (isPastDate(y, m, d)) {
-      return res
-        .status(400)
-        .json({ message: "Appointment date cannot be in the past" });
+      return res.status(400).json({ message: "Appointment date cannot be in the past" });
     }
+
+    // ✅ Always store patientId as ObjectId
+    const patientObjectId = new mongoose.Types.ObjectId(String(req.userId));
 
     /**
      * Enforce: patient cannot submit same procedure again if active exists
      * Active = Pending or Approved
      */
     const existingActive = await Appointment.findOne({
-      patientId: req.userId,
+      patientId: patientIdQuery(req.userId), // ✅ robust match for old records
       procedure,
       status: { $in: ["Pending", "Approved"] },
     }).lean();
@@ -195,9 +195,9 @@ router.post("/", requireAuth, async (req, res) => {
       }
     }
 
-    // Create as Pending (Submitted for approval)
+    // Create as Pending
     const appt = await Appointment.create({
-      patientId: req.userId,
+      patientId: patientObjectId, // ✅ ObjectId, consistent with schema
       procedure,
       year: y,
       month: m,
@@ -222,7 +222,7 @@ router.post("/", requireAuth, async (req, res) => {
 // GET /api/appointments/mine  (list my appointments)
 router.get("/mine", requireAuth, async (req, res) => {
   try {
-    const appts = await Appointment.find({ patientId: req.userId })
+    const appts = await Appointment.find({ patientId: patientIdQuery(req.userId) }) // ✅ robust
       .sort({ year: 1, month: 1, day: 1, createdAt: -1 })
       .lean();
 
@@ -238,7 +238,8 @@ router.get("/mine", requireAuth, async (req, res) => {
 router.get("/mine-filtered", requireAuth, async (req, res) => {
   try {
     const raw = String(req.query?.status || "").trim();
-    const query = { patientId: req.userId };
+
+    const query = { patientId: patientIdQuery(req.userId) }; // ✅ robust
 
     if (raw) {
       if (!ALLOWED_STATUSES.includes(raw)) {
@@ -259,8 +260,6 @@ router.get("/mine-filtered", requireAuth, async (req, res) => {
 
 /**
  * ✅ NEW: GET /api/appointments/mine-bills
- * Returns "bill-like" rows derived from COMPLETED appointments.
- * Useful if you want MyBills to read from appointments (or for debugging).
  */
 router.get("/mine-bills", requireAuth, async (req, res) => {
   try {
@@ -275,11 +274,7 @@ router.get("/mine-bills", requireAuth, async (req, res) => {
       const issuedAt = a.completedAt || a.updatedAt || a.createdAt || null;
 
       const procedureLabel =
-        a.billing?.label ||
-        a.billingLabel ||
-        a.procedureDone ||
-        a.procedure ||
-        "—";
+        a.billing?.label || a.billingLabel || a.procedureDone || a.procedure || "—";
 
       const amount =
         (typeof a.billing?.amount === "number" ? a.billing.amount : undefined) ??
@@ -293,7 +288,7 @@ router.get("/mine-bills", requireAuth, async (req, res) => {
         issuedAt,
         procedure: procedureLabel,
         totalAmount: Number.isFinite(Number(amount)) ? Number(amount) : 0,
-        status: "Pending", // appointments don't track payment; this is a default
+        status: "Pending",
         receiptUrl: a.resultPdfUrl || a.resultPdf || a.resultUrl || "",
         source: "appointments",
       };
@@ -318,7 +313,7 @@ router.patch("/:id/cancel", requireAuth, async (req, res) => {
 
     const appt = await Appointment.findOne({
       _id: id,
-      patientId: req.userId,
+      patientId: patientIdQuery(req.userId), // ✅ robust
     });
 
     if (!appt) {

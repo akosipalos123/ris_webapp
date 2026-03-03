@@ -224,7 +224,6 @@ router.post("/login", async (req, res) => {
 
 /* ============================================================
    ✅ STEP 1: POST /api/auth/register-otp
-   Sends OTP to email (only if email not registered)
 ============================================================ */
 router.post("/register-otp", async (req, res) => {
   try {
@@ -284,9 +283,6 @@ router.post("/register-otp", async (req, res) => {
 
 /* ============================================================
    ✅ STEP 2: POST /api/auth/register
-   Requires otpToken + otp + user fields
-   ✅ Forces role="patient"
-   ✅ Generates bsrtId like BSRT00000001
 ============================================================ */
 router.post("/register", async (req, res) => {
   try {
@@ -302,7 +298,7 @@ router.post("/register", async (req, res) => {
       gender,
       birthdate,
       contactNumber,
-      address, // ✅ optional (future-proof)
+      address,
     } = req.body;
 
     if (!otpToken || !otp) {
@@ -332,6 +328,10 @@ router.post("/register", async (req, res) => {
 
     if (!pw || !fn || !ln) {
       return res.status(400).json({ message: "firstName, lastName, and password are required" });
+    }
+
+    if (pw.length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters." });
     }
 
     const existing = await Patient.findOne({ email: emailClean });
@@ -372,7 +372,7 @@ router.post("/register", async (req, res) => {
       gender,
       birthdate,
       contactNumber,
-      address: String(address || "").trim(), // ✅ save if provided
+      address: String(address || "").trim(),
 
       role: "patient",
       bsrtId,
@@ -419,7 +419,7 @@ router.put("/me", requireAuth, async (req, res) => {
       "birthdate",
       "contactNumber",
       "avatarUrl",
-      "address", // ✅ FIX for Home Address saving
+      "address",
     ];
 
     const update = {};
@@ -454,6 +454,43 @@ router.put("/me", requireAuth, async (req, res) => {
     return res.json(patient);
   } catch (err) {
     return res.status(500).json({ message: "Update failed", error: err.message });
+  }
+});
+
+/* ============================================================
+   ✅ PUT /api/auth/change-password
+   Required by your EditProfile.jsx ChangePasswordModal
+============================================================ */
+router.put("/change-password", requireAuth, async (req, res) => {
+  try {
+    const oldPassword = String(req.body.oldPassword || "");
+    const newPassword = String(req.body.newPassword || "");
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ message: "oldPassword and newPassword are required" });
+    }
+
+    // keep consistent with your register rule
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: "New password must be at least 8 characters." });
+    }
+
+    const patient = await Patient.findById(req.userId).select("+passwordHash");
+    if (!patient) return res.status(404).json({ message: "Not found" });
+
+    if (!patient.isActive || patient.isArchived) {
+      return res.status(403).json({ message: "Account is inactive." });
+    }
+
+    const ok = await bcrypt.compare(oldPassword, patient.passwordHash);
+    if (!ok) return res.status(400).json({ message: "Old password is incorrect." });
+
+    patient.passwordHash = await bcrypt.hash(newPassword, 12);
+    await patient.save();
+
+    return res.json({ message: "Password updated successfully." });
+  } catch (err) {
+    return res.status(500).json({ message: "Failed to change password", error: err.message });
   }
 });
 

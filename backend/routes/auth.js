@@ -6,13 +6,14 @@ const crypto = require("crypto");
 
 const Patient = require("../models/Patient");
 const RegisterOtp = require("../models/RegisterOtp");
-const LoginOtp = require("../models/LoginOtp"); // ✅ NEW model (add this file)
-const Counter = require("../models/Counter");   // ✅ NEW model for BSRT sequence
+const LoginOtp = require("../models/LoginOtp");
+const Counter = require("../models/Counter");
 
 const { sendOtpEmail } = require("../utils/mailer");
 
 const router = express.Router();
 
+/* -------------------- TOKEN HELPERS -------------------- */
 function signToken(patientId, keepSignedIn = false) {
   const exp = keepSignedIn
     ? process.env.JWT_EXPIRES_IN_LONG || process.env.JWT_EXPIRES_IN || "30d"
@@ -21,14 +22,12 @@ function signToken(patientId, keepSignedIn = false) {
   return jwt.sign({ sub: patientId }, process.env.JWT_SECRET, { expiresIn: exp });
 }
 
-// Register OTP session token (short-lived)
 function signRegisterOtpToken(email) {
   return jwt.sign({ email, purpose: "register_otp" }, process.env.JWT_SECRET, {
     expiresIn: "10m",
   });
 }
 
-// ✅ Login OTP session token (short-lived)
 function signLoginOtpToken(email) {
   return jwt.sign({ email, purpose: "login_otp" }, process.env.JWT_SECRET, {
     expiresIn: "10m",
@@ -39,6 +38,7 @@ function hashOtp(otp) {
   return crypto.createHash("sha256").update(String(otp)).digest("hex");
 }
 
+/* -------------------- AUTH MIDDLEWARE -------------------- */
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const [type, token] = header.split(" ");
@@ -54,29 +54,28 @@ function requireAuth(req, res, next) {
   }
 }
 
-/**
- * ✅ BSRT ID generator (atomic, safe for concurrent signups)
- * Returns "BSRT00000001", "BSRT00000002", ...
- */
+/* -------------------- BSRT ID GENERATOR --------------------
+   Returns: BSRT00000001, BSRT00000002, ...
+   ✅ Fixed: use findByIdAndUpdate("patients", ...) (NOT { _id: "patients" })
+*/
 async function nextBsrtId() {
   const c = await Counter.findByIdAndUpdate(
-    { _id: "patients" },
+    "patients",
     { $inc: { seq: 1 } },
-    { new: true, upsert: true }
+    { new: true, upsert: true, setDefaultsOnInsert: true }
   );
 
   return `BSRT${String(c.seq).padStart(8, "0")}`;
 }
 
-/**
- * ✅ STEP 1: POST /api/auth/login-otp
- * Validates email+password then sends OTP
- */
+/* ============================================================
+   ✅ STEP 1: POST /api/auth/login-otp
+   Validates email+password then sends OTP
+============================================================ */
 router.post("/login-otp", async (req, res) => {
   try {
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
-    const keepSignedIn = !!req.body.keepSignedIn;
 
     if (!email || !password) {
       return res.status(400).json({ message: "email and password are required" });
@@ -97,9 +96,9 @@ router.post("/login-otp", async (req, res) => {
     if (doc?.lastSentAt) {
       const diffMs = now.getTime() - new Date(doc.lastSentAt).getTime();
       if (diffMs < 30_000) {
-        return res
-          .status(429)
-          .json({ message: "OTP recently sent. Please wait a moment and try again." });
+        return res.status(429).json({
+          message: "OTP recently sent. Please wait a moment and try again.",
+        });
       }
     }
 
@@ -138,12 +137,11 @@ router.post("/login-otp", async (req, res) => {
   }
 });
 
-/**
- * ✅ POST /api/auth/login
- * Supports:
- *  - OTP verify: { otpToken, otp, keepSignedIn }
- *  - Legacy: { email, password } (optional fallback)
- */
+/* ============================================================
+   ✅ POST /api/auth/login
+   - OTP verify: { otpToken, otp, keepSignedIn }
+   - Legacy: { email, password } (fallback)
+============================================================ */
 router.post("/login", async (req, res) => {
   try {
     const keepSignedIn = !!req.body.keepSignedIn;
@@ -167,7 +165,9 @@ router.post("/login", async (req, res) => {
       const email = String(payload.email).trim().toLowerCase();
 
       const otpDoc = await LoginOtp.findOne({ email });
-      if (!otpDoc) return res.status(400).json({ message: "No OTP request found. Please resend OTP." });
+      if (!otpDoc) {
+        return res.status(400).json({ message: "No OTP request found. Please resend OTP." });
+      }
 
       if (new Date() > new Date(otpDoc.expiresAt)) {
         await LoginOtp.deleteOne({ _id: otpDoc._id });
@@ -199,15 +199,18 @@ router.post("/login", async (req, res) => {
       return res.json({ token });
     }
 
-    // ✅ LEGACY MODE (optional fallback)
+    // ✅ LEGACY MODE
     const email = String(req.body.email || "").trim().toLowerCase();
     const password = String(req.body.password || "");
+
     if (!email || !password) {
       return res.status(400).json({ message: "email and password are required" });
     }
 
     const patient = await Patient.findOne({ email }).select("+passwordHash");
-    if (!patient || !patient.isActive || patient.isArchived) return res.status(401).json({ message: "Invalid credentials" });
+    if (!patient || !patient.isActive || patient.isArchived) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
     const ok = await bcrypt.compare(password, patient.passwordHash);
     if (!ok) return res.status(401).json({ message: "Invalid credentials" });
@@ -219,10 +222,10 @@ router.post("/login", async (req, res) => {
   }
 });
 
-/**
- * ✅ STEP 1: POST /api/auth/register-otp
- * Sends OTP to email (only if email not registered)
- */
+/* ============================================================
+   ✅ STEP 1: POST /api/auth/register-otp
+   Sends OTP to email (only if email not registered)
+============================================================ */
 router.post("/register-otp", async (req, res) => {
   try {
     const email = String(req.body.email || "").trim().toLowerCase();
@@ -238,7 +241,9 @@ router.post("/register-otp", async (req, res) => {
     if (doc?.lastSentAt) {
       const diffMs = now.getTime() - new Date(doc.lastSentAt).getTime();
       if (diffMs < 30_000) {
-        return res.status(429).json({ message: "OTP recently sent. Please wait a moment and try again." });
+        return res.status(429).json({
+          message: "OTP recently sent. Please wait a moment and try again.",
+        });
       }
     }
 
@@ -277,12 +282,12 @@ router.post("/register-otp", async (req, res) => {
   }
 });
 
-/**
- * ✅ STEP 2: POST /api/auth/register
- * Requires otpToken + otp + user fields
- * ✅ Forces role="patient"
- * ✅ Generates bsrtId like BSRT00000001
- */
+/* ============================================================
+   ✅ STEP 2: POST /api/auth/register
+   Requires otpToken + otp + user fields
+   ✅ Forces role="patient"
+   ✅ Generates bsrtId like BSRT00000001
+============================================================ */
 router.post("/register", async (req, res) => {
   try {
     const {
@@ -297,6 +302,7 @@ router.post("/register", async (req, res) => {
       gender,
       birthdate,
       contactNumber,
+      address, // ✅ optional (future-proof)
     } = req.body;
 
     if (!otpToken || !otp) {
@@ -351,10 +357,9 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "Invalid OTP code" });
     }
 
-    // OTP valid → create user
     const passwordHash = await bcrypt.hash(pw, 12);
 
-    // ✅ generate BSRT formatted ID (do this only after OTP is verified)
+    // ✅ generate BSRT formatted ID AFTER OTP is verified
     const bsrtId = await nextBsrtId();
 
     const patient = await Patient.create({
@@ -367,18 +372,13 @@ router.post("/register", async (req, res) => {
       gender,
       birthdate,
       contactNumber,
+      address: String(address || "").trim(), // ✅ save if provided
 
-      // ✅ enforce default role for normal registration
       role: "patient",
-
-      // ✅ store formatted ID
       bsrtId,
-
-      // ✅ keep consistent for SuperAdminPanel
       isArchived: false,
     });
 
-    // delete OTP record after success
     await RegisterOtp.deleteOne({ _id: otpDoc._id });
 
     const token = signToken(patient._id.toString(), false);
@@ -388,7 +388,9 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// GET /api/auth/me
+/* ============================================================
+   GET /api/auth/me
+============================================================ */
 router.get("/me", requireAuth, async (req, res) => {
   const patient = await Patient.findById(req.userId).lean();
   if (!patient) return res.status(404).json({ message: "Not found" });
@@ -397,13 +399,15 @@ router.get("/me", requireAuth, async (req, res) => {
 
   return res.json({
     ...patient,
-    // ✅ derived flags for convenience (do NOT rely on ADMIN_EMAILS anymore)
     isAdmin: role === "admin" || role === "superadmin",
     isSuperAdmin: role === "superadmin",
   });
 });
 
-// PUT /api/auth/me
+/* ============================================================
+   PUT /api/auth/me
+   ✅ now includes address + avatarUrl
+============================================================ */
 router.put("/me", requireAuth, async (req, res) => {
   try {
     const allowed = [
@@ -415,7 +419,7 @@ router.put("/me", requireAuth, async (req, res) => {
       "birthdate",
       "contactNumber",
       "avatarUrl",
-      "address",
+      "address", // ✅ FIX for Home Address saving
     ];
 
     const update = {};
@@ -430,6 +434,15 @@ router.put("/me", requireAuth, async (req, res) => {
       }
       update.birthdate = d;
     }
+
+    // Normalize strings
+    if (update.firstName !== undefined) update.firstName = String(update.firstName || "").trim();
+    if (update.middleName !== undefined) update.middleName = String(update.middleName || "").trim();
+    if (update.lastName !== undefined) update.lastName = String(update.lastName || "").trim();
+    if (update.suffix !== undefined) update.suffix = String(update.suffix || "").trim();
+    if (update.contactNumber !== undefined) update.contactNumber = String(update.contactNumber || "").trim();
+    if (update.avatarUrl !== undefined) update.avatarUrl = String(update.avatarUrl || "").trim();
+    if (update.address !== undefined) update.address = String(update.address || "").trim();
 
     const patient = await Patient.findByIdAndUpdate(
       req.userId,

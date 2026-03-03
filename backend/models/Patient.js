@@ -3,10 +3,10 @@ const mongoose = require("mongoose");
 
 const patientSchema = new mongoose.Schema(
   {
-    // ✅ NEW: human-friendly ID for all users (patients/admins/superadmins)
+    // ✅ human-friendly ID for all users (patients/admins/superadmins)
     bsrtId: { type: String, unique: true, index: true, default: "" },
 
-    // ✅ NEW: single-table RBAC (patient/admin/superadmin)
+    // ✅ single-table RBAC (patient/admin/superadmin)
     role: {
       type: String,
       enum: ["patient", "admin", "superadmin"],
@@ -15,7 +15,7 @@ const patientSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // ✅ NEW: for admin management (archive/restore)
+    // ✅ for admin management (archive/restore)
     isArchived: { type: Boolean, default: false, index: true },
 
     firstName: { type: String, required: true, trim: true },
@@ -34,14 +34,17 @@ const patientSchema = new mongoose.Schema(
       type: Date,
       validate: {
         validator: function (v) {
-          if (!v) return true;
-          return v <= new Date();
+          if (!v) return true; // allow empty
+          return v <= new Date(); // not in the future
         },
         message: "Birthdate cannot be in the future.",
       },
     },
 
     contactNumber: { type: String, trim: true, default: "" },
+
+    // ✅ NEW: Home Address (this is why it wasn't saving)
+    address: { type: String, trim: true, default: "" },
 
     avatarUrl: { type: String, trim: true, default: "" },
 

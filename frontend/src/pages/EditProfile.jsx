@@ -1274,10 +1274,10 @@ export default function EditProfile() {
               <div style={{ color: "#fff" }}>
                 <BrandIcon size={22} />
               </div>
-              <div style={brandTextStyle}>Synapse</div>
+              <div style={brandTextStyle}>AXIS</div>
             </div>
           ) : (
-            <div style={headerBadge} title="Synapse">
+            <div style={headerBadge} title="AXIS">
               <BrandIcon size={20} />
             </div>
           )}

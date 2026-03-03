@@ -1113,10 +1113,10 @@ export default function BookAppointment() {
               <div style={{ color: "#fff" }}>
                 <BrandIcon size={22} />
               </div>
-              <div style={brandText}>Synapse</div>
+              <div style={brandText}>AXIS</div>
             </div>
           ) : (
-            <div style={headerBadge} title="Synapse">
+            <div style={headerBadge} title="AXIS">
               <BrandIcon size={20} />
             </div>
           )}

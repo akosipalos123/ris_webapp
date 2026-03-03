@@ -1,6 +1,6 @@
 // frontend/src/pages/EditProfile.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiPut } from "../api";
+import { apiGet, apiPut, apiUpload } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 /* ---------- ICONS (SVG) ---------- */
@@ -176,30 +176,15 @@ function formatBytes(bytes) {
 }
 
 async function uploadAvatarFile(file, token) {
-  const AVATAR_UPLOAD_ENDPOINT = "/api/upload/avatar";
-
   const fd = new FormData();
-  fd.append("avatar", file); // ✅ changed from "file" to "avatar"
+  fd.append("avatar", file); // must match multer fieldname
 
-  const res = await fetch(AVATAR_UPLOAD_ENDPOINT, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
-  });
-
-  let data = {};
-  try {
-    data = await res.json();
-  } catch {}
-
-  if (!res.ok) {
-    throw new Error(data?.message || `Upload failed (${res.status})`);
-  }
+  const data = await apiUpload("/api/upload/avatar", token, fd);
 
   const url =
+    data?.avatarUrl ||
     data?.url ||
     data?.secure_url ||
-    data?.avatarUrl ||
     data?.imageUrl ||
     data?.fileUrl ||
     data?.path ||

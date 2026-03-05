@@ -12,6 +12,9 @@ const adminRoutes = require("./routes/admin");
 const billsRoutes = require("./routes/bills");
 const configRoutes = require("./routes/configRoutes");
 
+// ✅ Password reset routes (forgot/reset password)
+const passwordResetRoutes = require("./routes/passwordResetRoutes");
+
 // ✅ Admin auth + invite + admin user management routes
 const adminAuthRoutes = require("./routes/adminAuth");
 const adminInvitesRoutes = require("./routes/adminInvites");
@@ -59,6 +62,9 @@ app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+// ✅ Put reset routes FIRST so they cannot be blocked by any auth router fallback/middleware
+app.use("/api/auth", passwordResetRoutes);
 
 // ✅ Patient auth + patient-facing APIs
 app.use("/api/auth", authRoutes);

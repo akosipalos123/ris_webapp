@@ -103,9 +103,7 @@ async function sendEmail({ to, subject, text, html }) {
   ];
   const missing = missingEnv(required);
   if (missing.length) {
-    throw new Error(
-      `Gmail not configured. Missing: ${missing.join(", ")}.`
-    );
+    throw new Error(`Gmail not configured. Missing: ${missing.join(", ")}.`);
   }
 
   const from = normalizeEmailHeader(process.env.MAIL_FROM || process.env.GMAIL_SENDER);
@@ -199,8 +197,51 @@ async function sendAdminInviteEmail(to, inviteLink, expiresAt) {
   await sendEmail({ to, subject, text, html });
 }
 
+/**
+ * ✅ NEW: Password reset email
+ * - Uses the same Gmail sender (sendEmail)
+ * - Supports dev console mode similar to OTP/Invite
+ *
+ * Env options:
+ * - RESET_DELIVERY=console  (prints link instead of emailing)
+ * - PASSWORD_RESET_EMAIL_SUBJECT="Reset your AXIS password"
+ */
+async function sendPasswordResetEmail(to, resetLink, expiresAt) {
+  // Optional dev mode:
+  if (String(process.env.RESET_DELIVERY || "").toLowerCase() === "console") {
+    // eslint-disable-next-line no-console
+    console.log(`[PASSWORD RESET] ${to}\n${resetLink}\nExpires: ${formatExpiry(expiresAt)}`);
+    return;
+  }
+
+  const subject = process.env.PASSWORD_RESET_EMAIL_SUBJECT || "Reset your password (AXIS)";
+  const exp = formatExpiry(expiresAt);
+
+  const text =
+    `We received a request to reset your AXIS password.\n\n` +
+    `Reset link:\n${resetLink}\n\n` +
+    `This link will expire: ${exp}\n\n` +
+    `If you did not request this, you may ignore this email.`;
+
+  const html =
+    `<div style="font-family:Arial,sans-serif;line-height:1.5">` +
+    `<h2 style="margin:0 0 10px">Reset your password</h2>` +
+    `<p>We received a request to reset your <b>AXIS</b> password.</p>` +
+    `<p>` +
+    `<a href="${resetLink}" ` +
+    `style="display:inline-block;padding:10px 14px;background:#0b3d2e;color:#fff;text-decoration:none;border-radius:10px;font-weight:700">` +
+    `Reset Password</a></p>` +
+    `<p style="word-break:break-all;color:#334155;margin-top:8px">Or open this link:<br/>${resetLink}</p>` +
+    `<p><b>Expires:</b> ${exp}</p>` +
+    `<p style="color:#64748b;font-size:12px">If you did not request this, you may ignore this email.</p>` +
+    `</div>`;
+
+  await sendEmail({ to, subject, text, html });
+}
+
 module.exports = {
   sendOtpEmail,
   sendAdminInviteEmail,
+  sendPasswordResetEmail, // ✅ added
   sendEmail, // optional export (handy for future emails)
 };

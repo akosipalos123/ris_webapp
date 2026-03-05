@@ -11,6 +11,10 @@ import BookAppointment from "./pages/BookAppointment.jsx";
 import AdminAppointments from "./pages/AdminAppointments.jsx";
 import AdminDataRecords from "./pages/AdminDataRecords.jsx";
 
+// ✅ NEW: Forgot/Reset Password pages (PUBLIC)
+import ForgotPassword from "./pages/ForgotPassword.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
+
 // ✅ Admin invite registration page (PUBLIC)
 import AdminRegister from "./pages/AdminRegister.jsx";
 
@@ -213,6 +217,10 @@ export default function App() {
         {/* Public routes */}
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
+
+        {/* ✅ NEW: Forgot/Reset Password (PUBLIC) */}
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         {/* ✅ Public invite-based admin registration (matches your invite link) */}
         <Route path="/admin-register" element={<AdminRegister />} />

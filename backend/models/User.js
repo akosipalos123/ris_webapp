@@ -17,6 +17,10 @@ const userSchema = new mongoose.Schema(
 
     // ✅ NEW: archive flag (used by Super Admin Panel)
     isArchived: { type: Boolean, default: false, index: true },
+
+    // ✅ NEW: Forgot Password / Reset Password fields (safe add)
+    passwordResetTokenHash: { type: String, index: true },
+    passwordResetExpiresAt: { type: Date, index: true },
   },
   { timestamps: true }
 );

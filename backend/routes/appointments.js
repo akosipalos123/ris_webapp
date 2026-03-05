@@ -37,33 +37,119 @@ function requireAuth(req, res, next) {
 }
 
 /**
- * Dropdown-controlled procedures (must match frontend <option value="..."> exactly)
+ * ─────────────────────────────────────────────────────────────
+ * PROCEDURE HANDLING (fixes "Invalid procedure selected")
+ * ─────────────────────────────────────────────────────────────
+ *
+ * Problem: frontend sends labels like "Chest — Adult (above 12 y.o.)"
+ * but backend was strict-matching only "X-Ray".
+ *
+ * Fix: normalize/standardize procedure strings and:
+ *  - allow any procedure by default
+ *  - still enforce per-procedure limits when configured
+ *
+ * Optional strict mode:
+ *   STRICT_PROCEDURES=true  -> only allow keys in RAW_DAILY_LIMITS
  */
-const ALLOWED_PROCEDURES = ["X-Ray"];
+
+// If a procedure is not in RAW_DAILY_LIMITS, it uses this default.
+const DEFAULT_DAILY_LIMIT = Number(process.env.DEFAULT_DAILY_LIMIT || 15);
+
+// If true: only allow procedures in RAW_DAILY_LIMITS
+const STRICT_PROCEDURES = String(process.env.STRICT_PROCEDURES || "").toLowerCase() === "true";
 
 /**
  * Daily slot limits per procedure (central across all patients)
- * Key must match the exact ALLOWED_PROCEDURES value.
+ * Add your UI labels here if you want per-procedure limits.
  */
-const DAILY_LIMITS = {
+const RAW_DAILY_LIMITS = {
   "X-Ray": 15,
+  // Example (optional):
+  // "Chest - Adult (above 12 y.o.)": 15,
+  // "Chest - Pedia (below 12 y.o.)": 10,
 };
 
-/**
- * Statuses that consume capacity.
- * Recommended: reserve slot while Pending to prevent oversubmission.
- */
+// Statuses that consume capacity.
 const COUNT_STATUSES_FOR_CAPACITY = ["Pending", "Approved"];
 
-/**
- * Allowed appointment statuses (keep in sync with model)
- */
+// Allowed appointment statuses (keep in sync with model)
 const ALLOWED_STATUSES = ["Pending", "Approved", "Cancelled", "Completed", "Rejected"];
+
+// Convert fancy dashes to "-" and normalize spacing (but keep readable label)
+function standardizeProcedureLabel(input) {
+  return String(input || "")
+    .normalize("NFKC")
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-") // hyphen/en/em/minus -> "-"
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Lowercased key used for matching
+function normalizeProcedureKey(input) {
+  return standardizeProcedureLabel(input).toLowerCase();
+}
+
+// Build an index of known procedures (for limits + optional strict validation)
+const LIMITS_INDEX = new Map(); // normalizedKey -> { label, limit }
+for (const [label, limit] of Object.entries(RAW_DAILY_LIMITS)) {
+  const std = standardizeProcedureLabel(label);
+  LIMITS_INDEX.set(normalizeProcedureKey(std), {
+    label: std,
+    limit: Number(limit),
+  });
+}
+
+function resolveProcedure(input) {
+  const std = standardizeProcedureLabel(input);
+  if (!std) {
+    return { ok: false, message: "procedure is required" };
+  }
+
+  const key = normalizeProcedureKey(std);
+  const matched = LIMITS_INDEX.get(key);
+
+  if (STRICT_PROCEDURES && !matched) {
+    return { ok: false, message: "Invalid procedure selected" };
+  }
+
+  // If known, use canonical label + configured limit; else fallback limit
+  const label = matched?.label ?? std;
+  const limit =
+    Number.isFinite(matched?.limit) ? matched.limit : DEFAULT_DAILY_LIMIT;
+
+  return { ok: true, label, limit };
+}
+
+/**
+ * When querying old records, match both:
+ *  - raw incoming label
+ *  - standardized label
+ *  - em-dash version of standardized label (covers older stored values)
+ */
+function procedureVariantsForQuery(input) {
+  const raw = String(input || "").trim();
+  const std = standardizeProcedureLabel(raw);
+
+  const set = new Set();
+  if (raw) set.add(raw);
+  if (std) set.add(std);
+
+  // Add em-dash version too (for older stored values)
+  if (std) set.add(std.replace(/ - /g, " — "));
+
+  return Array.from(set).filter(Boolean);
+}
 
 function isValidYMD(y, m, d) {
   if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
   const dt = new Date(y, m - 1, d);
-  return !Number.isNaN(dt.getTime()) && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+  return (
+    !Number.isNaN(dt.getTime()) &&
+    dt.getFullYear() === y &&
+    dt.getMonth() === m - 1 &&
+    dt.getDate() === d
+  );
 }
 
 function isPastDate(y, m, d) {
@@ -88,7 +174,7 @@ function patientIdQuery(userId) {
   return { $in: ids };
 }
 
-// GET /api/appointments/availability?procedure=X-Ray&date=YYYY-MM-DD
+// GET /api/appointments/availability?procedure=...&date=YYYY-MM-DD
 router.get("/availability", requireAuth, async (req, res) => {
   try {
     const { procedure, date } = req.query;
@@ -97,8 +183,9 @@ router.get("/availability", requireAuth, async (req, res) => {
       return res.status(400).json({ message: "procedure and date are required" });
     }
 
-    if (!ALLOWED_PROCEDURES.includes(procedure)) {
-      return res.status(400).json({ message: "Invalid procedure selected" });
+    const pr = resolveProcedure(procedure);
+    if (!pr.ok) {
+      return res.status(400).json({ message: pr.message });
     }
 
     const [y, m, d] = String(date).split("-").map(Number);
@@ -106,22 +193,22 @@ router.get("/availability", requireAuth, async (req, res) => {
       return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD required)" });
     }
 
-    const limit = DAILY_LIMITS[procedure] ?? 0;
+    const variants = procedureVariantsForQuery(procedure);
 
     const used = await Appointment.countDocuments({
-      procedure,
+      procedure: { $in: variants },
       year: y,
       month: m,
       day: d,
       status: { $in: COUNT_STATUSES_FOR_CAPACITY },
     });
 
-    const remaining = Math.max(limit - used, 0);
+    const remaining = Math.max(pr.limit - used, 0);
 
     return res.json({
-      procedure,
+      procedure: pr.label, // standardized/canonical
       date: fmtYMD(y, m, d),
-      limit,
+      limit: pr.limit,
       used,
       remaining,
     });
@@ -133,19 +220,36 @@ router.get("/availability", requireAuth, async (req, res) => {
 // POST /api/appointments  (submit appointment for approval)
 router.post("/", requireAuth, async (req, res) => {
   try {
-    const { procedure, year, month, day } = req.body;
+    // Support either:
+    //  - { procedure, date: "YYYY-MM-DD" }
+    //  - { procedure, year, month, day }
+    const { procedure, date, year, month, day } = req.body;
 
-    if (!procedure || year === undefined || month === undefined || day === undefined) {
-      return res.status(400).json({ message: "procedure, year, month, day are required" });
+    if (!procedure) {
+      return res.status(400).json({ message: "procedure is required" });
     }
 
-    if (!ALLOWED_PROCEDURES.includes(procedure)) {
-      return res.status(400).json({ message: "Invalid procedure selected" });
+    const pr = resolveProcedure(procedure);
+    if (!pr.ok) {
+      return res.status(400).json({ message: pr.message });
     }
 
-    const y = Number(year);
-    const m = Number(month);
-    const d = Number(day);
+    let y, m, d;
+
+    if (date) {
+      const parts = String(date).split("-").map(Number);
+      if (parts.length !== 3) {
+        return res.status(400).json({ message: "Invalid date format (YYYY-MM-DD required)" });
+      }
+      [y, m, d] = parts;
+    } else {
+      if (year === undefined || month === undefined || day === undefined) {
+        return res.status(400).json({ message: "year, month, day are required (or provide date)" });
+      }
+      y = Number(year);
+      m = Number(month);
+      d = Number(day);
+    }
 
     if (!isValidYMD(y, m, d)) {
       return res.status(400).json({ message: "Invalid date" });
@@ -158,47 +262,48 @@ router.post("/", requireAuth, async (req, res) => {
     // ✅ Always store patientId as ObjectId
     const patientObjectId = new mongoose.Types.ObjectId(String(req.userId));
 
+    const variants = procedureVariantsForQuery(procedure);
+
     /**
      * Enforce: patient cannot submit same procedure again if active exists
      * Active = Pending or Approved
      */
     const existingActive = await Appointment.findOne({
       patientId: patientIdQuery(req.userId), // ✅ robust match for old records
-      procedure,
+      procedure: { $in: variants },
       status: { $in: ["Pending", "Approved"] },
     }).lean();
 
     if (existingActive) {
       return res.status(409).json({
         message:
-          `You already have an active ${procedure} appointment ` +
+          `You already have an active ${pr.label} appointment ` +
           `(${existingActive.status === "Pending" ? "Submitted for approval" : "Approved"}). ` +
           `You can submit again only after it is Cancelled or Completed.`,
       });
     }
 
     // Capacity check (central across all users)
-    const limit = DAILY_LIMITS[procedure] ?? 0;
-    if (limit > 0) {
+    if (pr.limit > 0) {
       const used = await Appointment.countDocuments({
-        procedure,
+        procedure: { $in: variants },
         year: y,
         month: m,
         day: d,
         status: { $in: COUNT_STATUSES_FOR_CAPACITY },
       });
 
-      if (used >= limit) {
+      if (used >= pr.limit) {
         return res.status(409).json({
-          message: `No available slots left for ${procedure} on ${fmtYMD(y, m, d)}.`,
+          message: `No available slots left for ${pr.label} on ${fmtYMD(y, m, d)}.`,
         });
       }
     }
 
     // Create as Pending
     const appt = await Appointment.create({
-      patientId: patientObjectId, // ✅ ObjectId, consistent with schema
-      procedure,
+      patientId: patientObjectId,
+      procedure: pr.label, // ✅ store standardized/canonical label
       year: y,
       month: m,
       day: d,
@@ -222,7 +327,7 @@ router.post("/", requireAuth, async (req, res) => {
 // GET /api/appointments/mine  (list my appointments)
 router.get("/mine", requireAuth, async (req, res) => {
   try {
-    const appts = await Appointment.find({ patientId: patientIdQuery(req.userId) }) // ✅ robust
+    const appts = await Appointment.find({ patientId: patientIdQuery(req.userId) })
       .sort({ year: 1, month: 1, day: 1, createdAt: -1 })
       .lean();
 
@@ -239,7 +344,7 @@ router.get("/mine-filtered", requireAuth, async (req, res) => {
   try {
     const raw = String(req.query?.status || "").trim();
 
-    const query = { patientId: patientIdQuery(req.userId) }; // ✅ robust
+    const query = { patientId: patientIdQuery(req.userId) };
 
     if (raw) {
       if (!ALLOWED_STATUSES.includes(raw)) {
@@ -313,7 +418,7 @@ router.patch("/:id/cancel", requireAuth, async (req, res) => {
 
     const appt = await Appointment.findOne({
       _id: id,
-      patientId: patientIdQuery(req.userId), // ✅ robust
+      patientId: patientIdQuery(req.userId),
     });
 
     if (!appt) {

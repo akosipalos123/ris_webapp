@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiPost } from "../api";
 import { Link, useNavigate } from "react-router-dom";
+import { GoogleLogin } from "@react-oauth/google";
 import "../assets/styles/login.css";
 
 export default function Login() {
@@ -27,6 +28,8 @@ export default function Login() {
 
   // ✅ local fallback bg (Vite public)
   const FALLBACK_BG = `${import.meta.env.BASE_URL}images/background.png`;
+
+  const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
 
   // If already logged in:
   // - prefer patient session (token) -> /profile
@@ -166,6 +169,50 @@ export default function Login() {
     }
   }
 
+  // ✅ Google login handler
+  async function loginWithGoogleCredential(credential) {
+    if (!credential) {
+      setMsg("Google login failed (missing credential).");
+      return;
+    }
+
+    // If user was in OTP flow, reset it to avoid UI confusion
+    if (otpSent) resetOtpFlow();
+
+    setMsg("");
+    setLoading(true);
+
+    try {
+      // tokenOverride = null -> ensures NO Authorization header is attached
+      const data = await apiPost(
+        "/api/auth/google",
+        { credential, keepSignedIn },
+        null
+      );
+
+      if (!data?.token) throw new Error("Login token missing. Please try again.");
+
+      // ✅ If backend supports admin via Google, handle it
+      if (data?.isAdmin) {
+        localStorage.removeItem("token");
+        localStorage.setItem("adminToken", data.token);
+        localStorage.setItem("adminRole", data.role || data.user?.role || "");
+        nav("/admin");
+        return;
+      }
+
+      // ✅ Normal patient flow
+      localStorage.removeItem("adminToken");
+      localStorage.removeItem("adminRole");
+      localStorage.setItem("token", data.token);
+      nav("/profile");
+    } catch (err) {
+      setMsg(err.message || "Google login failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function onSubmit(e) {
     e.preventDefault();
 
@@ -219,9 +266,7 @@ export default function Login() {
 
       <div className="synapse-card synapse-card--login">
         <h1 className="synapse-title">Welcome!</h1>
-        <div className="synapse-subtitle">
-          Sign in to your account.
-        </div>
+        <div className="synapse-subtitle">Sign in to your account.</div>
 
         {msg ? <div className="synapse-alert">{msg}</div> : null}
 
@@ -349,20 +394,41 @@ export default function Login() {
           </div>
 
           <div className="synapse-social">
-            <button
-              type="button"
-              className="synapse-social-btn"
-              aria-label="Continue with Google"
-              disabled={loading}
-              onClick={() => setMsg("Google login not wired yet.")}
+            {/* ✅ Google Sign-in */}
+            <div
+              style={{
+                opacity: loading || otpSent ? 0.6 : 1,
+                pointerEvents: loading || otpSent ? "none" : "auto",
+              }}
+              title={!hasGoogleClientId ? "Missing VITE_GOOGLE_CLIENT_ID" : undefined}
             >
-              <span className="g">G</span>
-            </button>
+              {hasGoogleClientId ? (
+                <GoogleLogin
+                  onSuccess={(cred) => loginWithGoogleCredential(cred?.credential)}
+                  onError={() => setMsg("Google login failed.")}
+                  type="icon"
+                  shape="circle"
+                  theme="outline"
+                  size="large"
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="synapse-social-btn"
+                  disabled
+                  aria-label="Continue with Google"
+                >
+                  <span className="g">G</span>
+                </button>
+              )}
+            </div>
+
+            {/* Facebook placeholder */}
             <button
               type="button"
               className="synapse-social-btn"
               aria-label="Continue with Facebook"
-              disabled={loading}
+              disabled={loading || otpSent}
               onClick={() => setMsg("Facebook login not wired yet.")}
             >
               <span className="f">f</span>

@@ -53,7 +53,6 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // ✅ IMPORTANT: Express/router in your setup does NOT accept "*".
-// Use regex instead to handle ALL preflights safely.
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json({ limit: "2mb" }));
@@ -66,7 +65,7 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 // ✅ Put reset routes FIRST so they cannot be blocked by any auth router fallback/middleware
 app.use("/api/auth", passwordResetRoutes);
 
-// ✅ Patient auth + patient-facing APIs
+// ✅ Patient auth + patient-facing APIs (includes POST /api/auth/google now)
 app.use("/api/auth", authRoutes);
 app.use("/api/appointments", appointmentsRoutes);
 app.use("/api/upload", uploadRoutes);
@@ -81,7 +80,7 @@ app.use("/api/admin/users", adminUsersRoutes);
 // ✅ Existing admin APIs (appointments/billing/etc)
 app.use("/api/admin", adminRoutes);
 
-// ✅ centralized error handler
+// ✅ centralized error handler (keep LAST)
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ message: "Server error", error: err?.message });

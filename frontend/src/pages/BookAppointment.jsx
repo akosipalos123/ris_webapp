@@ -140,6 +140,31 @@ const AdminInfoIcon = (p) => (
 );
 
 /* ---------- HELPERS ---------- */
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 function ageFromBirthdate(birthdate) {
   if (!birthdate) return "";
   const b = new Date(birthdate);
@@ -367,6 +392,12 @@ export default function BookAppointment() {
   const nav = useNavigate();
   const loc = useLocation();
 
+  const DARK = "#0b3d2e";
+  const BG = "#ffffff";
+
+  // Mobile/Tablet uses the NEW layout (drawer + responsive); Desktop uses the OLD layout
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
+
   const [msg, setMsg] = useState("");
 
   // profile (header + prefill for modal)
@@ -376,15 +407,18 @@ export default function BookAppointment() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
-  // sidebar (expanded like mockup)
+  // OLD desktop layout sidebar
   const [sideOpen, setSideOpen] = useState(true);
-  const toggleSidebar = () => setSideOpen((v) => !v);
+  const toggleSidebarDesktop = () => setSideOpen((v) => !v);
+
+  // NEW mobile/tablet drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // appointments list
   const [loadingList, setLoadingList] = useState(true);
   const [appointments, setAppointments] = useState([]);
 
-  // filters (mockup)
+  // filters
   const [filters, setFilters] = useState({ status: "All", procedure: "All", date: "" });
 
   // booking modal
@@ -433,6 +467,26 @@ export default function BookAppointment() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
+
   // close dropdown on outside click / ESC
   useEffect(() => {
     if (!menuOpen) return;
@@ -466,7 +520,11 @@ export default function BookAppointment() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
+    localStorage.removeItem("adminEmail");
     nav("/login");
   }
 
@@ -529,12 +587,13 @@ export default function BookAppointment() {
 
   const noSlots =
     availability && typeof availability.remaining === "number" && availability.remaining <= 0;
-  const submitDisabled = saving || uploadingSlip || checkingAvail || noSlots || hasActiveSameProcedure;
+  const submitDisabled =
+    saving || uploadingSlip || checkingAvail || noSlots || hasActiveSameProcedure;
 
   async function uploadRequestSlip(token, appointmentId, file) {
     const fd = new FormData();
     fd.append("appointmentId", appointmentId);
-    fd.append("referral", file); // backend expects "referral" (same as your old code)
+    fd.append("referral", file); // backend expects "referral"
 
     const resp = await fetch(`${API_URL}/api/upload/referral`, {
       method: "POST",
@@ -599,14 +658,13 @@ export default function BookAppointment() {
     }
   }
 
-  // ✅ Cancel appointment (PATCH /api/appointments/:id/cancel)
+  // ✅ Cancel appointment
   async function cancelAppointment(appointmentId) {
     const token = localStorage.getItem("token");
     if (!token) return nav("/login");
 
     try {
       setMsg("");
-      // apiPatch signature supports (path, token, body) — use this to avoid argument shift
       await apiPatch(`/api/appointments/${appointmentId}/cancel`, token, {});
       await loadAll();
       setMsg("Appointment cancelled.");
@@ -636,12 +694,8 @@ export default function BookAppointment() {
   }, [appointments]);
 
   const procedureOptions = useMemo(() => {
-    // ✅ start from your standard catalog (new procedure types)
     const s = new Set(XRAY_PROCEDURE_LABELS);
-
-    // keep any legacy/extra procedures already in DB so filters won't break
     for (const a of appointments) if (a?.procedure) s.add(a.procedure);
-
     return ["All", ...Array.from(s)];
   }, [appointments]);
 
@@ -669,14 +723,667 @@ export default function BookAppointment() {
   };
 
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
-  // Adjust this based on what your /api/auth/me returns:
   const isAdmin =
     profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
 
-  /* ---------- STYLES ---------- */
-  const DARK = "#0b3d2e";
-  const BG = "#ffffff";
+  /* ---------- SIDEBAR ITEMS ---------- */
+  const PATIENT_SIDE_ITEMS = [
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
+    { label: "My Bills", to: "/bills", IconComp: BillsIcon },
+    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon },
+    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
+  ];
 
+  const ADMIN_SIDE_ITEMS = [
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
+    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
+    { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
+    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
+  ];
+
+  const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
+
+  const isItemActive = (to, exact) => {
+    if (exact) return loc.pathname === to;
+    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
+  };
+
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — uses global CSS (profileShell)
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""]
+      .filter(Boolean)
+      .join(" ");
+
+    // mobile-friendly control styles
+    const mLabel = { fontSize: 13, fontWeight: 900, color: "#0f172a", marginBottom: 6 };
+    const mControl = {
+      width: "100%",
+      padding: "12px 12px",
+      borderRadius: 12,
+      border: `2px solid ${DARK}`,
+      background: "#fff",
+      color: "#0f172a",
+      fontWeight: 900,
+      outline: "none",
+    };
+    const mFilters = { display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 10 };
+    const mBtnRow = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 };
+    const mBtn = (variant = "outline", disabled = false) => ({
+      padding: "10px 12px",
+      borderRadius: 12,
+      fontWeight: 900,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.65 : 1,
+      border: variant === "outline" ? `2px solid ${DARK}` : `2px solid ${DARK}`,
+      background: variant === "solid" ? DARK : "#fff",
+      color: variant === "solid" ? "#fff" : DARK,
+      flex: 1,
+      minWidth: 140,
+    });
+
+    const addBtn = {
+      width: "100%",
+      marginTop: 12,
+      padding: "12px 14px",
+      borderRadius: 12,
+      background: DARK,
+      color: "#fff",
+      fontWeight: 900,
+      border: `2px solid ${DARK}`,
+      cursor: "pointer",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    };
+
+    const card = {
+      border: `2px solid ${DARK}`,
+      borderRadius: 16,
+      padding: 12,
+      background: "#fff",
+      display: "grid",
+      gap: 10,
+      marginTop: 12,
+    };
+
+    const statusPill = (status) => {
+      const s = String(status || "");
+      const bg =
+        s === "Completed"
+          ? "#dcfce7"
+          : s === "Approved"
+          ? "#dbeafe"
+          : s === "Cancelled" || s === "Rejected"
+          ? "#fee2e2"
+          : "#fffbeb";
+      const color =
+        s === "Completed"
+          ? "#166534"
+          : s === "Approved"
+          ? "#1e40af"
+          : s === "Cancelled" || s === "Rejected"
+          ? "#991b1b"
+          : "#92400e";
+
+      return {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontWeight: 900,
+        fontSize: 12,
+        background: bg,
+        color,
+        border: "1px solid rgba(0,0,0,.1)",
+        whiteSpace: "nowrap",
+      };
+    };
+
+    const actionRow = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+
+    const cancelBtn = (disabled) => ({
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 12,
+      background: "#fff",
+      border: `2px solid ${disabled ? "rgba(185,28,28,.35)" : "#b91c1c"}`,
+      color: disabled ? "rgba(185,28,28,.55)" : "#b91c1c",
+      fontWeight: 900,
+      cursor: disabled ? "not-allowed" : "pointer",
+    });
+
+    const viewBtn = (disabled) => ({
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 12,
+      background: DARK,
+      color: "#fff",
+      fontWeight: 900,
+      border: `2px solid ${DARK}`,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.55 : 1,
+      textDecoration: "none",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      pointerEvents: disabled ? "none" : "auto",
+    });
+
+    // Modal (mobile sizes)
+    const overlay = {
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,.55)",
+      zIndex: 2000,
+      display: "grid",
+      placeItems: "center",
+      padding: 14,
+    };
+
+    const modal = {
+      width: "min(560px, 96%)",
+      height: "min(92vh, 860px)",
+      background: "linear-gradient(180deg, rgba(11,61,46,.92) 0%, rgba(47,90,69,.92) 100%)",
+      borderRadius: 22,
+      boxShadow: "0 26px 70px rgba(0,0,0,.45)",
+      padding: "18px 16px 14px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 12,
+    };
+
+    const modalHeader = { textAlign: "center", color: "#fff", lineHeight: 1.05, marginTop: 2 };
+    const modalTitle = { fontSize: 34, fontWeight: 900, margin: 0 };
+    const modalSub = { margin: "6px 0 0", fontSize: 13, opacity: 0.9, fontWeight: 700 };
+    const modalInner = { flex: 1, overflow: "auto", paddingRight: 6 };
+
+    const modalGrid = {
+      display: "grid",
+      gridTemplateColumns: "1fr",
+      gap: 14,
+      alignItems: "start",
+      marginTop: 10,
+    };
+
+    const field = { marginBottom: 12 };
+    const fieldLabel = { color: "#fff", fontWeight: 900, fontSize: 16, marginBottom: 8 };
+
+    const input = {
+      width: "100%",
+      padding: "12px 14px",
+      borderRadius: 12,
+      border: "2px solid rgba(255,255,255,.9)",
+      background: "rgba(0,0,0,.08)",
+      color: "#fff",
+      fontWeight: 800,
+      outline: "none",
+      fontSize: 14,
+    };
+
+    const select = { ...input, appearance: "none" };
+
+    const calendarBox = {
+      width: "100%",
+      background: "#fff",
+      borderRadius: 12,
+      border: "2px solid rgba(255,255,255,.9)",
+      padding: 10,
+    };
+
+    const procWrap = { display: "grid", gap: 10, marginTop: 6 };
+    const orText = { color: "#fff", fontWeight: 900, opacity: 0.85, textAlign: "center" };
+
+    const uploadBtn = {
+      padding: "12px 14px",
+      borderRadius: 12,
+      background: "#fff",
+      border: "2px solid rgba(255,255,255,.9)",
+      color: DARK,
+      fontWeight: 900,
+      cursor: "pointer",
+      whiteSpace: "nowrap",
+      width: "100%",
+    };
+
+    const bigBookBtn = (disabled) => ({
+      marginTop: 14,
+      width: "100%",
+      padding: "14px 16px",
+      borderRadius: 999,
+      background: DARK,
+      color: "#fff",
+      border: `2px solid ${DARK}`,
+      fontWeight: 900,
+      fontSize: 16,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.6 : 1,
+    });
+
+    const hintLine = (tone) => ({
+      color:
+        tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
+      fontWeight: 900,
+      fontSize: 13,
+      marginTop: 8,
+    });
+
+    return (
+      <div className={rootClass} style={{ "--dark": DARK, "--bg": BG }}>
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button
+              type="button"
+              className="headerBtn"
+              onClick={() => setDrawerOpen(false)}
+              aria-label="Close menu"
+              title="Close"
+            >
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button
+                  type="button"
+                  className="burger"
+                  title="Menu"
+                  onClick={() => setDrawerOpen((v) => !v)}
+                  aria-label="Open menu"
+                >
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">My Appointments</div>
+                  <div className="homeSub">Filter and review your booking history</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">Patient ID</div>
+                  <div className="patientIdValue">{patientIdShort}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{fullName || "Patient Name"}</div>
+                    <div className="ddSub">Patient ID</div>
+                    <div className="ddId">{patientIdShort}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        <span aria-hidden="true">⎋</span>
+                        Sign Out
+                      </button>
+
+                      <Link to="/profile/edit" className="ddBtn ddBtnSolid" onClick={() => setMenuOpen(false)}>
+                        <span aria-hidden="true">✎</span>
+                        Edit Profile
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            <div className="contentInner">
+              {msg ? <div className="msgWarn">{msg}</div> : null}
+
+              {/* Filters (stacked) */}
+              <div style={mFilters}>
+                <div>
+                  <div style={mLabel}>Status</div>
+                  <select name="status" value={filters.status} onChange={onFilterChange} style={mControl}>
+                    {statusOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div style={mLabel}>Procedure</div>
+                  <select name="procedure" value={filters.procedure} onChange={onFilterChange} style={mControl}>
+                    {procedureOptions.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div style={mLabel}>Date</div>
+                  <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={mControl} />
+                </div>
+
+                <div style={mBtnRow}>
+                  <button type="button" style={mBtn("outline", loadingList)} onClick={loadAll} disabled={loadingList}>
+                    Refresh
+                  </button>
+                  <button type="button" style={mBtn("outline", false)} onClick={resetFilters}>
+                    Reset
+                  </button>
+                </div>
+              </div>
+
+              <button type="button" style={addBtn} onClick={openBookModal}>
+                + Add Appointment
+              </button>
+
+              {/* Appointment Cards */}
+              {loadingList ? (
+                <div style={{ marginTop: 12, color: "#64748b", fontWeight: 800 }}>Loading...</div>
+              ) : filteredAppointments.length === 0 ? (
+                <div style={{ marginTop: 12, color: "#64748b", fontWeight: 800 }}>No appointments found.</div>
+              ) : (
+                filteredAppointments.map((a) => {
+                  const dt = toDateObj(a);
+                  const dateText = dt ? dt.toLocaleDateString() : "-";
+                  const procedureText = a?.procedure || "-";
+                  const statusText = a?.status || "-";
+
+                  const allowCancel = canCancel(statusText);
+                  const allowResults = canViewResults(statusText);
+
+                  return (
+                    <div key={a._id} style={card}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ fontWeight: 900 }}>{dateText}</div>
+                        <span style={statusPill(statusText)}>{statusText}</span>
+                      </div>
+
+                      <div style={{ fontWeight: 900, color: "#0f172a" }}>{procedureText}</div>
+
+                      <div style={actionRow}>
+                        <button
+                          type="button"
+                          style={cancelBtn(!allowCancel)}
+                          disabled={!allowCancel}
+                          onClick={() => cancelAppointment(a._id)}
+                        >
+                          Cancel
+                        </button>
+
+                        <Link
+                          to={`/diagnostic-results?appointmentId=${encodeURIComponent(a._id)}`}
+                          style={viewBtn(!allowResults)}
+                          aria-disabled={!allowResults}
+                          title={!allowResults ? "Results available when Completed" : "View Results"}
+                        >
+                          View Results
+                        </Link>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* BOOK APPOINTMENT MODAL (mobile) */}
+          {bookOpen ? (
+            <div style={overlay} onClick={closeBookModal} role="dialog" aria-modal="true" aria-label="Book appointment">
+              <div style={modal} onClick={(e) => e.stopPropagation()}>
+                <div style={modalHeader}>
+                  <h2 style={modalTitle}>Book Appointment</h2>
+                  <div style={modalSub}>Fill out the information to book an appointment</div>
+                </div>
+
+                <div style={modalInner}>
+                  <form onSubmit={onSubmitBook}>
+                    <div style={modalGrid}>
+                      {/* BASIC INFO (still just display/prefill; not submitted to backend) */}
+                      <div>
+                        <div style={field}>
+                          <div style={fieldLabel}>First Name</div>
+                          <input style={input} placeholder="Enter your first name" defaultValue={profile?.firstName || ""} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Middle Name</div>
+                          <input style={input} placeholder="Enter your middle name" defaultValue={profile?.middleName || ""} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Last Name</div>
+                          <input style={input} placeholder="Enter your last name" defaultValue={profile?.lastName || ""} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Suffix</div>
+                          <input style={input} placeholder="Enter your suffix" defaultValue={profile?.suffix || ""} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Sex</div>
+                          <input style={input} placeholder="Male/Female" defaultValue={profile?.gender || ""} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Birthdate</div>
+                          <input
+                            style={input}
+                            placeholder="mm/dd/yyyy"
+                            defaultValue={profile?.birthdate ? new Date(profile.birthdate).toLocaleDateString() : ""}
+                          />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Age</div>
+                          <input style={input} placeholder="Enter your age" defaultValue={ageFromBirthdate(profile?.birthdate)} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Contact No.</div>
+                          <input style={input} placeholder="Enter your contact no." defaultValue={profile?.contactNumber || ""} />
+                        </div>
+
+                        <div style={field}>
+                          <div style={fieldLabel}>Email Address</div>
+                          <input style={input} placeholder="Enter your email address" defaultValue={profile?.email || ""} />
+                        </div>
+                      </div>
+
+                      {/* PROCEDURE + SLIP */}
+                      <div>
+                        <div style={fieldLabel}>Procedure</div>
+
+                        <div style={procWrap}>
+                          <select name="procedure" value={form.procedure} onChange={onBookChange} style={select} required>
+                            <option value="">Type of Procedure</option>
+                            {XRAY_PROCEDURE_ITEMS.map((x) => (
+                              <option key={x.code} value={x.label}>
+                                {x.label} — {formatPhp(x.fee)}
+                              </option>
+                            ))}
+                          </select>
+
+                          <div style={orText}>or</div>
+
+                          <button
+                            type="button"
+                            style={uploadBtn}
+                            onClick={() => slipInputRef.current?.click()}
+                            title="Upload request slip (optional)"
+                          >
+                            Upload Request Slip
+                          </button>
+
+                          <input
+                            ref={slipInputRef}
+                            type="file"
+                            accept="application/pdf,image/*"
+                            style={{ display: "none" }}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] || null;
+                              setSlipFile(f);
+                              setMsg("");
+                            }}
+                          />
+                        </div>
+
+                        {slipFile ? <div style={hintLine("muted")}>Selected slip: {slipFile.name}</div> : null}
+                      </div>
+
+                      {/* DATE + CALENDAR */}
+                      <div>
+                        <div style={fieldLabel}>Date of Appointment</div>
+
+                        <div style={calendarBox}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+                            <input
+                              type="date"
+                              name="date"
+                              value={form.date}
+                              onChange={onBookChange}
+                              min={todayIso}
+                              required
+                              style={{
+                                width: "100%",
+                                padding: "10px 10px",
+                                borderRadius: 12,
+                                border: `2px solid ${DARK}`,
+                                fontWeight: 900,
+                                color: "#0f172a",
+                                outline: "none",
+                              }}
+                            />
+
+                            <ActiveCalendar
+                              valueIso={form.date}
+                              minIso={todayIso}
+                              accent={DARK}
+                              onChangeIso={(iso) => {
+                                setForm((p) => ({ ...p, date: iso }));
+                                setMsg("");
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {!form.procedure || !form.date ? (
+                          <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
+                        ) : checkingAvail ? (
+                          <div style={hintLine("muted")}>Checking availability...</div>
+                        ) : availability ? (
+                          <div style={hintLine(noSlots ? "bad" : "good")}>
+                            Remaining slots: {availability.remaining} ({availability.used}/{availability.limit} used)
+                          </div>
+                        ) : (
+                          <div style={hintLine("muted")}>Availability unavailable.</div>
+                        )}
+
+                        {hasActiveSameProcedure ? (
+                          <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <button type="submit" disabled={submitDisabled} style={bigBookBtn(submitDisabled)}>
+                      {uploadingSlip ? "Uploading..." : saving ? "Booking..." : "Book Appointment"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <style>{`
+            /* placeholder color in modal */
+            .syn-input::placeholder { color: rgba(255,255,255,.65); }
+
+            /* dropdown option font color (Windows/Chrome) */
+            .syn-procedure-select option {
+              color: #0f172a;
+              background: #ffffff;
+            }
+          `}</style>
+        </main>
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
+
+  /* ---------- STYLES (DESKTOP) ---------- */
   const SIDEBAR_OPEN_W = 280;
   const SIDEBAR_CLOSED_W = 78;
 
@@ -787,7 +1494,7 @@ export default function BookAppointment() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "0 24px 16px", // ✅ no top white space
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
@@ -797,7 +1504,7 @@ export default function BookAppointment() {
 
   const topbar = {
     height: 84,
-    borderRadius: "0 0 22px 22px", // ✅ flush to top
+    borderRadius: "0 0 22px 22px",
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",
@@ -970,9 +1677,20 @@ export default function BookAppointment() {
     overflow: "hidden",
   };
 
-  const apptPanel = { ...panel, minHeight: 520, display: "flex", flexDirection: "column", marginTop: 14 };
+  const apptPanel = {
+    ...panel,
+    minHeight: 520,
+    display: "flex",
+    flexDirection: "column",
+    marginTop: 14,
+  };
 
-  const apptPanelTop = { display: "flex", justifyContent: "flex-end", padding: "4px 8px 10px", flex: "0 0 auto" };
+  const apptPanelTop = {
+    display: "flex",
+    justifyContent: "flex-end",
+    padding: "4px 8px 10px",
+    flex: "0 0 auto",
+  };
 
   const addApptBtn = {
     display: "inline-flex",
@@ -1041,7 +1759,7 @@ export default function BookAppointment() {
     pointerEvents: disabled ? "none" : "auto",
   });
 
-  /* ---------- MODAL (match your screenshot) ---------- */
+  /* ---------- MODAL (DESKTOP) ---------- */
   const overlay = {
     position: "absolute",
     inset: 0,
@@ -1154,30 +1872,6 @@ export default function BookAppointment() {
     marginTop: 6,
   });
 
-  /* ---------- SIDEBAR ITEMS ---------- */
-  const PATIENT_SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
-    { label: "My Bills", to: "/bills", IconComp: BillsIcon },
-    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon },
-    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
-  ];
-
-  const ADMIN_SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon }, // ✅ admin can book here
-    { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
-  ];
-
-  const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
-
-  const isItemActive = (to, exact) => {
-    if (exact) return loc.pathname === to;
-    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
-  };
-
   return (
     <div style={shell}>
       {/* LEFT SIDEBAR */}
@@ -1197,7 +1891,13 @@ export default function BookAppointment() {
           )}
 
           {sideOpen ? (
-            <button type="button" style={headerBtn} onClick={toggleSidebar} aria-label="Collapse sidebar" title="Collapse">
+            <button
+              type="button"
+              style={headerBtn}
+              onClick={toggleSidebarDesktop}
+              aria-label="Collapse sidebar"
+              title="Collapse"
+            >
               ☰
             </button>
           ) : null}
@@ -1252,7 +1952,7 @@ export default function BookAppointment() {
         <div style={topbar}>
           <div style={topTitleWrap}>
             {!sideOpen ? (
-              <div style={burger} title="Menu" onClick={toggleSidebar}>
+              <div style={burger} title="Menu" onClick={toggleSidebarDesktop}>
                 ☰
               </div>
             ) : null}
@@ -1432,27 +2132,27 @@ export default function BookAppointment() {
                     <div>
                       <div style={field}>
                         <div style={fieldLabel}>First Name</div>
-                        <input className="syn-input" style={input} placeholder="Enter your first name" defaultValue={profile?.firstName || ""} />
+                        <input style={input} placeholder="Enter your first name" defaultValue={profile?.firstName || ""} />
                       </div>
 
                       <div style={field}>
                         <div style={fieldLabel}>Middle Name</div>
-                        <input className="syn-input" style={input} placeholder="Enter your middle name" defaultValue={profile?.middleName || ""} />
+                        <input style={input} placeholder="Enter your middle name" defaultValue={profile?.middleName || ""} />
                       </div>
 
                       <div style={field}>
                         <div style={fieldLabel}>Last Name</div>
-                        <input className="syn-input" style={input} placeholder="Enter your last name" defaultValue={profile?.lastName || ""} />
+                        <input style={input} placeholder="Enter your last name" defaultValue={profile?.lastName || ""} />
                       </div>
 
                       <div style={field}>
                         <div style={fieldLabel}>Suffix</div>
-                        <input className="syn-input" style={input} placeholder="Enter your suffix" defaultValue={profile?.suffix || ""} />
+                        <input style={input} placeholder="Enter your suffix" defaultValue={profile?.suffix || ""} />
                       </div>
 
                       <div style={field}>
                         <div style={fieldLabel}>Sex</div>
-                        <input className="syn-input" style={input} placeholder="Male/Female" defaultValue={profile?.gender || ""} />
+                        <input style={input} placeholder="Male/Female" defaultValue={profile?.gender || ""} />
                       </div>
                     </div>
 
@@ -1461,7 +2161,6 @@ export default function BookAppointment() {
                       <div style={field}>
                         <div style={fieldLabel}>Birthdate</div>
                         <input
-                          className="syn-input"
                           style={input}
                           placeholder="mm/dd/yyyy"
                           defaultValue={profile?.birthdate ? new Date(profile.birthdate).toLocaleDateString() : ""}
@@ -1470,24 +2169,31 @@ export default function BookAppointment() {
 
                       <div style={field}>
                         <div style={fieldLabel}>Age</div>
-                        <input className="syn-input" style={input} placeholder="Enter your age" defaultValue={ageFromBirthdate(profile?.birthdate)} />
+                        <input style={input} placeholder="Enter your age" defaultValue={ageFromBirthdate(profile?.birthdate)} />
                       </div>
 
                       <div style={field}>
                         <div style={fieldLabel}>Contact No.</div>
-                        <input className="syn-input" style={input} placeholder="Enter your contact no." defaultValue={profile?.contactNumber || ""} />
+                        <input style={input} placeholder="Enter your contact no." defaultValue={profile?.contactNumber || ""} />
                       </div>
 
                       <div style={field}>
                         <div style={fieldLabel}>Email Address</div>
-                        <input className="syn-input" style={input} placeholder="Enter your email address" defaultValue={profile?.email || ""} />
+                        <input style={input} placeholder="Enter your email address" defaultValue={profile?.email || ""} />
                       </div>
 
                       {/* Procedure + Upload row */}
                       <div style={{ marginTop: 8 }}>
                         <div style={procWrap}>
                           <div style={{ minWidth: 240 }}>
-                            <select className="syn-procedure-select" name="procedure" value={form.procedure} onChange={onBookChange} style={select} required>
+                            <select
+                              className="syn-procedure-select"
+                              name="procedure"
+                              value={form.procedure}
+                              onChange={onBookChange}
+                              style={select}
+                              required
+                            >
                               <option value="">Type of Procedure</option>
                               {XRAY_PROCEDURE_ITEMS.map((x) => (
                                 <option key={x.code} value={x.label}>
@@ -1549,7 +2255,6 @@ export default function BookAppointment() {
                             }}
                           />
 
-                          {/* ✅ Active clickable calendar */}
                           <ActiveCalendar
                             valueIso={form.date}
                             minIso={todayIso}
@@ -1562,7 +2267,6 @@ export default function BookAppointment() {
                         </div>
                       </div>
 
-                      {/* Availability line */}
                       {!form.procedure || !form.date ? (
                         <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
                       ) : checkingAvail ? (
@@ -1575,7 +2279,9 @@ export default function BookAppointment() {
                         <div style={hintLine("muted")}>Availability unavailable.</div>
                       )}
 
-                      {hasActiveSameProcedure ? <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div> : null}
+                      {hasActiveSameProcedure ? (
+                        <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div>
+                      ) : null}
                     </div>
                   </div>
 

@@ -122,6 +122,31 @@ const SuperAdminIcon = (p) => (
 );
 
 /* ---------- HELPERS ---------- */
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 function ageFromBirthdate(birthdate) {
   if (!birthdate) return "-";
   const b = new Date(birthdate);
@@ -162,6 +187,9 @@ export default function Profile() {
   const nav = useNavigate();
   const loc = useLocation();
 
+  // Mobile/Tablet uses the NEW layout; Desktop/Laptop uses the OLD layout
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
+
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [profile, setProfile] = useState(null);
@@ -170,8 +198,11 @@ export default function Profile() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
+  // OLD desktop layout sidebar
   const [sideOpen, setSideOpen] = useState(true);
-  const toggleSidebar = () => setSideOpen((v) => !v);
+
+  // NEW mobile/tablet drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -209,6 +240,27 @@ export default function Profile() {
     };
   }, [nav]);
 
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Also close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
+
+  // Close account menu when clicking outside / Esc
   useEffect(() => {
     if (!menuOpen) return;
 
@@ -232,6 +284,7 @@ export default function Profile() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
     // Clear both (prevents mixed sessions)
     localStorage.removeItem("token");
     localStorage.removeItem("adminToken");
@@ -269,23 +322,15 @@ export default function Profile() {
   }, [profile]);
 
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
-  // Source of truth: role in MongoDB
   const roleClean = useMemo(() => String(profile?.role || profile?.userType || "").trim().toLowerCase(), [profile]);
-
-  // Admin UI if role is admin OR superadmin (fallback: legacy boolean if backend returns it)
   const isAdmin = roleClean === "admin" || roleClean === "superadmin" || profile?.isAdmin === true;
-
-  // Super admin ONLY when role is exactly superadmin
   const isSuperAdmin = roleClean === "superadmin";
-
-  // ✅ Super Admin Panel button only for superadmin
   const canSeeSuperAdminPanel = isSuperAdmin;
 
-  /* ---------- UPDATES (patient-side appointment/account changes) ---------- */
+  /* ---------- UPDATES ---------- */
   const updates = useMemo(() => {
     const list = [];
 
-    // Profile change (best-effort; uses updatedAt if backend returns it)
     if (profile?.updatedAt) {
       const at = new Date(profile.updatedAt);
       list.push({
@@ -298,16 +343,13 @@ export default function Profile() {
       });
     }
 
-    // Appointment status changes (best-effort; without history we infer from current status + updatedAt)
     for (const a of Array.isArray(appointments) ? appointments : []) {
       const status = String(a?.status || "Pending").trim();
       const proc = String(a?.procedure || "Appointment").trim() || "Appointment";
       const sched = toDateObj(a);
       const schedText = sched ? fmtShort(sched) : "-";
-
       const at = new Date(a?.updatedAt || a?.createdAt || Date.now());
 
-      // Completed in your flow implies PDF+notes were uploaded, so "Result ready" is safe here.
       if (status === "Completed") {
         list.push({
           at,
@@ -356,7 +398,6 @@ export default function Profile() {
         continue;
       }
 
-      // Pending (default)
       list.push({
         at,
         key: `appt-${String(a?._id || proc)}-${safeTime(at)}-pending`,
@@ -367,7 +408,6 @@ export default function Profile() {
       });
     }
 
-    // sort newest first
     list.sort((x, y) => safeTime(y.at) - safeTime(x.at));
     return list;
   }, [profile, appointments]);
@@ -383,7 +423,6 @@ export default function Profile() {
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
-  // ✅ No Super Admin Panel in sidebar
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
@@ -399,7 +438,263 @@ export default function Profile() {
     return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
   };
 
-  /* ---------- STYLES (COMPACT) ---------- */
+  const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
+
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — uses global CSS in index.css
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
+
+    return (
+      <div className={rootClass} style={{ "--dark": "#0b3d2e", "--bg": "#ffffff" }}>
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button
+              type="button"
+              className="headerBtn"
+              onClick={() => setDrawerOpen(false)}
+              aria-label="Close menu"
+              title="Close"
+            >
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button
+                  type="button"
+                  className="burger"
+                  title="Menu"
+                  onClick={() => setDrawerOpen((v) => !v)}
+                  aria-label="Open menu"
+                >
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">Home</div>
+                  <div className="homeSub">Manage your profile and appointments</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">{idLabelText}</div>
+                  <div className="patientIdValue">{patientIdShort}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{fullName || "Account"}</div>
+                    <div className="ddSub">{idLabelText}</div>
+                    <div className="ddId">{patientIdShort}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        <span aria-hidden="true">⎋</span>
+                        Sign Out
+                      </button>
+
+                      <Link to="/profile/edit" className="ddBtn ddBtnSolid" onClick={() => setMenuOpen(false)}>
+                        <span aria-hidden="true">✎</span>
+                        Edit Profile
+                      </Link>
+                    </div>
+
+                    {canSeeSuperAdminPanel ? (
+                      <>
+                        <div className="ddDivider" />
+                        <Link to="/admin/super" onClick={() => setMenuOpen(false)} className="ddBtn ddBtnFull">
+                          <SuperAdminIcon size={18} />
+                          Super Admin Panel
+                        </Link>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            <div className="contentInner">
+              {msg ? <div className="msgWarn">{msg}</div> : null}
+
+              {loading ? (
+                <div className="muted">Loading profile...</div>
+              ) : !profile ? (
+                <div className="muted">No profile found.</div>
+              ) : (
+                <>
+                  <div className="sectionTitle">Appointments</div>
+                  <p className="sectionSub">Review the status of your appointments</p>
+
+                  <div className="pillsRow">
+                    <div className="pill">
+                      <div className="pillLabel">Total</div>
+                      <div className="pillValue">{counts.total || 0}</div>
+                    </div>
+                    <div className="pill">
+                      <div className="pillLabel">Pending</div>
+                      <div className="pillValue">{counts.Pending || 0}</div>
+                    </div>
+                    <div className="pill">
+                      <div className="pillLabel">Approved</div>
+                      <div className="pillValue">{counts.Approved || 0}</div>
+                    </div>
+                    <div className="pill">
+                      <div className="pillLabel">Completed</div>
+                      <div className="pillValue">{counts.Completed || 0}</div>
+                    </div>
+                  </div>
+
+                  <div className="panels">
+                    <section>
+                      <div className="sectionTitle">{isAdmin ? "Admin Information" : "Patient Information"}</div>
+                      <p className="sectionSub">Details from your account profile</p>
+
+                      <div className="panel">
+                        <div className="infoLabel">Full Name</div>
+                        <div className="infoValue">{fullName || "-"}</div>
+
+                        <div className="infoLabel">Contact Number</div>
+                        <div className="infoValue">{profile.contactNumber || "-"}</div>
+
+                        <div className="infoLabel">Birthdate</div>
+                        <div className="infoValue">{birthdateText}</div>
+
+                        <div className="infoLabel">Age</div>
+                        <div className="infoValue">{ageFromBirthdate(profile.birthdate)}</div>
+
+                        <div className="infoLabel">Sex</div>
+                        <div className="infoValue">{profile.gender || "-"}</div>
+
+                        <div className="infoLabel">Email Address</div>
+                        <div className="infoValue infoValueWrap">{profile.email || "-"}</div>
+
+                        <div className="infoLabel">Home Address</div>
+                        <div className="infoValue infoValueWrap">{profile.address || "-"}</div>
+
+                        <div className="actionsRow">
+                          <Link to="/appointments" className="btnPrimary">
+                            Book Appointment
+                          </Link>
+
+                          <Link to="/profile/edit" className="btnOutline">
+                            Edit Profile
+                          </Link>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section>
+                      <div className="sectionTitle">Updates</div>
+                      <p className="sectionSub">Shows your most recent account changes</p>
+
+                      <div className="panel">
+                        <ul className="updatesList">
+                          {updatesTop.length ? (
+                            updatesTop.map((u) => (
+                              <li key={u.key} className="updateItem">
+                                <span className="updateMeta">{fmtShort(u.at)}</span>
+                                <span className="updateTitle">{u.title}:</span>{" "}
+                                <span className="updateText">{u.detail}</span>
+                                {u?.cta?.to ? (
+                                  <Link to={u.cta.to} className="updateLink">
+                                    {u.cta.label || "Open"}
+                                  </Link>
+                                ) : null}
+                              </li>
+                            ))
+                          ) : (
+                            <li>No updates yet.</li>
+                          )}
+                        </ul>
+                      </div>
+                    </section>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
+
+  const toggleSidebarDesktop = () => setSideOpen((v) => !v);
+
+  /* ---------- STYLES (OLD / DESKTOP) ---------- */
   const DARK = "#0b3d2e";
   const BG = "#ffffff";
 
@@ -609,7 +904,6 @@ export default function Profile() {
   const rightTop = { display: "flex", alignItems: "center", gap: 12, position: "relative" };
   const patientIdWrap = { textAlign: "right", lineHeight: 1.1 };
 
-  const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
   const patientIdLabel = { fontSize: 14, fontWeight: 800 };
   const patientIdValue = { fontSize: 12, opacity: 0.9 };
 
@@ -691,7 +985,13 @@ export default function Profile() {
           )}
 
           {sideOpen ? (
-            <button type="button" style={headerBtn} onClick={toggleSidebar} aria-label="Collapse sidebar" title="Collapse">
+            <button
+              type="button"
+              style={headerBtn}
+              onClick={toggleSidebarDesktop}
+              aria-label="Collapse sidebar"
+              title="Collapse"
+            >
               ☰
             </button>
           ) : null}
@@ -746,14 +1046,16 @@ export default function Profile() {
         <div style={topbar}>
           <div style={topTitleWrap}>
             {!sideOpen ? (
-              <div style={burger} title="Menu" onClick={toggleSidebar}>
+              <div style={burger} title="Menu" onClick={toggleSidebarDesktop}>
                 ☰
               </div>
             ) : null}
 
             <div>
               <div style={{ fontSize: 40, fontWeight: 900, lineHeight: 1 }}>Home</div>
-              <div style={{ opacity: 0.95, fontSize: 13, fontWeight: 700 }}>Manage your profile and appointments</div>
+              <div style={{ opacity: 0.95, fontSize: 13, fontWeight: 700 }}>
+                Manage your profile and appointments
+              </div>
             </div>
           </div>
 
@@ -795,7 +1097,6 @@ export default function Profile() {
                   </Link>
                 </div>
 
-                {/* ✅ Super Admin Panel link only for role=superadmin */}
                 {canSeeSuperAdminPanel ? (
                   <>
                     <div style={ddDivider} />
@@ -821,7 +1122,15 @@ export default function Profile() {
         </div>
 
         {msg ? (
-          <div style={{ padding: "8px 10px", border: "1px solid #f59e0b", background: "#fffbeb", borderRadius: 12, marginBottom: 10 }}>
+          <div
+            style={{
+              padding: "8px 10px",
+              border: "1px solid #f59e0b",
+              background: "#fffbeb",
+              borderRadius: 12,
+              marginBottom: 10,
+            }}
+          >
             {msg}
           </div>
         ) : null}
@@ -923,8 +1232,7 @@ export default function Profile() {
                       updatesTop.map((u) => (
                         <li key={u.key} style={{ marginBottom: 10 }}>
                           <span style={updateItemMeta}>{fmtShort(u.at)}</span>
-                          <span style={updateItemTitle}>{u.title}:</span>{" "}
-                          <span>{u.detail}</span>
+                          <span style={updateItemTitle}>{u.title}:</span> <span>{u.detail}</span>
                           {u?.cta?.to ? (
                             <Link to={u.cta.to} style={updateItemLink}>
                               {u.cta.label || "Open"}

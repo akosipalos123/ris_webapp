@@ -130,7 +130,6 @@ function toLocalISODate(d) {
 function parseBirthdate(birthdate) {
   if (!birthdate) return null;
 
-  // Handle input="date" value (YYYY-MM-DD) as LOCAL date (avoid UTC off-by-one)
   if (typeof birthdate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(birthdate)) {
     const [y, m, d] = birthdate.split("-").map(Number);
     const dt = new Date(y, m - 1, d);
@@ -195,6 +194,31 @@ async function uploadAvatarFile(file, token) {
   return url;
 }
 
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 /* ---------- MODAL: EDIT PROFILE (POPUP) ---------- */
 function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
   const [saving, setSaving] = useState(false);
@@ -246,7 +270,6 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
     setAvatarFile(null);
 
     const existing = p.avatarUrl || "/default-avatar.png";
-    // revoke old blob previews
     setAvatarPreview((prev) => {
       if (prev && String(prev).startsWith("blob:")) {
         try {
@@ -288,20 +311,17 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // basic validation
     if (!isImageFile(file)) {
       setMsg("Please select a valid image file.");
       return;
     }
 
-    // keep this conservative; backend limit might be 2MB
     const MAX = 2 * 1024 * 1024;
     if (file.size > MAX) {
       setMsg(`Image too large (${formatBytes(file.size)}). Max is ${formatBytes(MAX)}.`);
       return;
     }
 
-    // preview
     const objUrl = URL.createObjectURL(file);
 
     setAvatarPreview((prev) => {
@@ -341,10 +361,9 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
       setSaving(true);
       setMsg("");
 
-      // avatar handling (upload first, then save)
-      let avatarUrlToSave = null; // null means "don't touch avatarUrl"
+      let avatarUrlToSave = null;
       if (avatarMode === "remove") {
-        avatarUrlToSave = ""; // clear
+        avatarUrlToSave = "";
       } else if (avatarMode === "new") {
         if (!avatarFile) throw new Error("Please select an image file.");
         const uploadedUrl = await uploadAvatarFile(avatarFile, token);
@@ -359,13 +378,10 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
         gender: form.gender,
         birthdate: form.birthdate ? form.birthdate : null,
         contactNumber: form.contactNumber.trim(),
-
-        // NOTE: your backend must allow these if you want them editable
         email: form.email.trim(),
         address: form.address.trim(),
       };
 
-      // only include avatarUrl when it changed
       if (avatarUrlToSave !== null) payload.avatarUrl = avatarUrlToSave;
 
       await apiPut("/api/auth/me", token, payload);
@@ -522,7 +538,6 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
 
         {msg ? <div style={msgBox}>{msg}</div> : null}
 
-        {/* ✅ Avatar section */}
         <div style={avatarRow}>
           <div style={avatarBox}>
             <img src={avatarPreview || "/default-avatar.png"} alt="Avatar preview" style={avatarImg} />
@@ -533,12 +548,7 @@ function EditProfileModal({ open, onClose, initialProfile, onSaved }) {
             <div style={avatarHint}>PNG/JPG recommended • Max 2MB</div>
             <div style={{ height: 10 }} />
             <div style={avatarBtns}>
-              <button
-                type="button"
-                style={smallBtn(saving)}
-                disabled={saving}
-                onClick={() => fileRef.current?.click()}
-              >
+              <button type="button" style={smallBtn(saving)} disabled={saving} onClick={() => fileRef.current?.click()}>
                 Choose Photo
               </button>
 
@@ -709,8 +719,6 @@ function ChangePasswordModal({ open, onClose, onChanged }) {
       if (form.newPassword !== form.confirmPassword) return setMsg("New password and confirmation do not match.");
 
       const payload = { oldPassword: form.oldPassword, newPassword: form.newPassword };
-
-      // ✅ change this endpoint if your backend uses a different one
       await apiPut("/api/auth/change-password", token, payload);
 
       onChanged?.("Password updated successfully.");
@@ -724,8 +732,9 @@ function ChangePasswordModal({ open, onClose, onChanged }) {
 
   if (!open) return null;
 
+  // ✅ fixed overlay (better on mobile)
   const overlay = {
-    position: "absolute",
+    position: "fixed",
     inset: 0,
     background: "rgba(0,0,0,.35)",
     display: "grid",
@@ -735,7 +744,7 @@ function ChangePasswordModal({ open, onClose, onChanged }) {
   };
 
   const modal = {
-    width: "min(720px, 92%)",
+    width: "min(720px, 92vw)",
     height: "min(520px, 86vh)",
     background: "linear-gradient(180deg, rgba(11,61,46,.92) 0%, rgba(47,90,69,.92) 100%)",
     borderRadius: 22,
@@ -863,26 +872,32 @@ export default function EditProfile() {
   const nav = useNavigate();
   const loc = useLocation();
 
+  const DARK = "#0b3d2e";
+  const BG = "#ffffff";
+
+  // ✅ Mobile/Tablet uses NEW layout; Desktop/Laptop uses OLD layout
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
+  const isPhone = useMediaQuery("(max-width: 520px)");
+
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [profile, setProfile] = useState(null);
 
+  // desktop sidebar
   const [sideOpen, setSideOpen] = useState(true);
+
+  // mobile drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // top-right dropdown
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // popups
   const [editOpen, setEditOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
 
-  const menuRef = useRef(null);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 900px)");
-    const apply = () => setSideOpen(!mq.matches);
-    apply();
-    mq.addEventListener?.("change", apply);
-    return () => mq.removeEventListener?.("change", apply);
-  }, []);
-
-  const toggleSidebar = () => setSideOpen((v) => !v);
+  const toggleSidebarDesktop = () => setSideOpen((v) => !v);
 
   async function loadProfile() {
     const token = localStorage.getItem("token");
@@ -905,6 +920,26 @@ export default function EditProfile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
+
   useEffect(() => {
     if (!menuOpen) return;
 
@@ -926,6 +961,7 @@ export default function EditProfile() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
     localStorage.removeItem("token");
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminRole");
@@ -963,9 +999,287 @@ export default function EditProfile() {
   const pageTitle = isAdmin ? (isSuperAdmin ? "Superadmin Information" : "Admin Information") : "Patient Information";
   const idLabel = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
 
-  /* ---------- STYLES ---------- */
-  const DARK = "#0b3d2e";
-  const BG = "#ffffff";
+  /* ---------- SIDEBAR ITEMS ---------- */
+  const PATIENT_SIDE_ITEMS = [
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
+    { label: "My Bills", to: "/bills", IconComp: BillsIcon },
+    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon },
+    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
+  ];
+
+  const ADMIN_SIDE_ITEMS = [
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
+    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
+    { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
+    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
+  ];
+
+  const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
+
+  const isItemActive = (to, exact) => {
+    if (exact) return loc.pathname === to;
+    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
+  };
+
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — uses global .profileShell CSS
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
+    const gridCols = isPhone ? "1fr" : "1fr 1fr";
+
+    const cardTop = { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" };
+    const avatarWrap = {
+      width: 86,
+      height: 86,
+      borderRadius: 999,
+      overflow: "hidden",
+      border: `3px solid ${DARK}`,
+      background: "#fff",
+      flex: "0 0 auto",
+    };
+    const avatarImg = { width: "100%", height: "100%", objectFit: "cover", display: "block" };
+
+    const nameText = { fontSize: 18, fontWeight: 900, color: DARK, lineHeight: 1.1 };
+    const idText = { fontSize: 12, fontWeight: 900, color: "#334155", marginTop: 4 };
+
+    const infoGrid = { display: "grid", gridTemplateColumns: gridCols, gap: 12, marginTop: 14 };
+    const infoItem = {
+      border: "1px solid rgba(0,0,0,.12)",
+      borderRadius: 12,
+      padding: "10px 10px",
+      background: "#fff",
+      display: "grid",
+      gap: 4,
+      minWidth: 0,
+    };
+    const infoLabel = { fontSize: 12, fontWeight: 900, color: "#0f172a", opacity: 0.8 };
+    const infoValue = { fontSize: 14, fontWeight: 900, color: DARK, wordBreak: "break-word" };
+
+    const btnStack = { display: "grid", gap: 10, marginTop: 14 };
+
+    return (
+      <div className={rootClass} style={{ "--dark": DARK, "--bg": BG }}>
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button type="button" className="burger" title="Menu" onClick={() => setDrawerOpen((v) => !v)} aria-label="Open menu">
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">{pageTitle}</div>
+                  <div className="homeSub">Manage and edit your profile</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">{idLabel}</div>
+                  <div className="patientIdValue">{displayId}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{fullName}</div>
+                    <div className="ddSub">{idLabel}</div>
+                    <div className="ddId">{displayId}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        <span aria-hidden="true">⎋</span>
+                        Sign Out
+                      </button>
+
+                      <button
+                        type="button"
+                        className="ddBtn ddBtnSolid"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setEditOpen(true);
+                        }}
+                      >
+                        <span aria-hidden="true">✎</span>
+                        Edit Profile
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            <div className="contentInner">
+              {msg ? <div className="msgWarn">{msg}</div> : null}
+
+              {/* ✅ keep borders/details on phone */}
+              <div className="panel" style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                  <button
+                    type="button"
+                    className="btnOutline"
+                    onClick={loadProfile}
+                    disabled={loading}
+                    style={{ opacity: loading ? 0.6 : 1, cursor: loading ? "not-allowed" : "pointer" }}
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {loading ? (
+                  <div className="muted" style={{ marginTop: 10 }}>
+                    Loading...
+                  </div>
+                ) : !profile ? (
+                  <div className="muted" style={{ marginTop: 10 }}>
+                    No profile found.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ marginTop: 12, ...cardTop }}>
+                      <div style={avatarWrap}>
+                        <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Profile" style={avatarImg} />
+                      </div>
+
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={nameText}>{fullName}</div>
+                        <div style={idText}>
+                          {idLabel}: {displayId}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={infoGrid}>
+                      <div style={infoItem}>
+                        <div style={infoLabel}>Sex</div>
+                        <div style={infoValue}>{profile?.gender || "-"}</div>
+                      </div>
+
+                      <div style={infoItem}>
+                        <div style={infoLabel}>Birthdate</div>
+                        <div style={infoValue}>{birthdateText}</div>
+                      </div>
+
+                      <div style={infoItem}>
+                        <div style={infoLabel}>Age</div>
+                        <div style={infoValue}>{ageText}</div>
+                      </div>
+
+                      <div style={infoItem}>
+                        <div style={infoLabel}>Contact Number</div>
+                        <div style={infoValue}>{profile?.contactNumber || "-"}</div>
+                      </div>
+
+                      <div style={{ ...infoItem, gridColumn: "1 / -1" }}>
+                        <div style={infoLabel}>Email Address</div>
+                        <div style={infoValue}>{profile?.email || "-"}</div>
+                      </div>
+
+                      <div style={{ ...infoItem, gridColumn: "1 / -1" }}>
+                        <div style={infoLabel}>Home Address</div>
+                        <div style={infoValue}>{profile?.address || "-"}</div>
+                      </div>
+                    </div>
+
+                    <div style={btnStack}>
+                      <button type="button" className="btnPrimary" onClick={() => setEditOpen(true)} style={{ width: "100%" }}>
+                        Edit Profile
+                      </button>
+
+                      <button type="button" className="btnOutline" onClick={() => setPwOpen(true)} style={{ width: "100%" }}>
+                        Change Password
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* POPUPS */}
+        <EditProfileModal open={editOpen} onClose={() => setEditOpen(false)} initialProfile={profile} onSaved={loadProfile} />
+        <ChangePasswordModal open={pwOpen} onClose={() => setPwOpen(false)} onChanged={(text) => setMsg(text)} />
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
 
   const SIDEBAR_OPEN_W = 280;
   const SIDEBAR_CLOSED_W = 78;
@@ -1240,33 +1554,8 @@ export default function EditProfile() {
     border: `2px solid ${DARK}`,
   };
 
-  /* ---------- SIDEBAR ITEMS ---------- */
-  const PATIENT_SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
-    { label: "My Bills", to: "/bills", IconComp: BillsIcon },
-    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon },
-    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
-  ];
-
-  const ADMIN_SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
-    { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
-  ];
-
-  const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
-
-  const isItemActive = (to, exact) => {
-    if (exact) return loc.pathname === to;
-    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
-  };
-
   return (
     <div style={shell}>
-      {/* SIDEBAR */}
       <aside style={sidebar}>
         <div style={sideHeader}>
           {sideOpen ? (
@@ -1283,7 +1572,7 @@ export default function EditProfile() {
           )}
 
           {sideOpen ? (
-            <button type="button" style={headerBtn} onClick={toggleSidebar} aria-label="Collapse sidebar" title="Collapse">
+            <button type="button" style={headerBtn} onClick={toggleSidebarDesktop} aria-label="Collapse sidebar" title="Collapse">
               ☰
             </button>
           ) : null}
@@ -1332,13 +1621,11 @@ export default function EditProfile() {
         ) : null}
       </aside>
 
-      {/* MAIN */}
       <main style={main}>
-        {/* TOP BAR */}
         <div style={topbar}>
           <div style={topTitleWrap}>
             {!sideOpen ? (
-              <div style={burger} title="Menu" onClick={toggleSidebar}>
+              <div style={burger} title="Menu" onClick={toggleSidebarDesktop}>
                 ☰
               </div>
             ) : null}
@@ -1349,7 +1636,6 @@ export default function EditProfile() {
             </div>
           </div>
 
-          {/* DROPDOWN */}
           <div style={rightTop} ref={menuRef}>
             <div style={patientIdWrap}>
               <div style={patientIdLabel}>{idLabel}</div>
@@ -1408,7 +1694,6 @@ export default function EditProfile() {
             ) : (
               <>
                 <div style={panelBody}>
-                  {/* LEFT */}
                   <div>
                     <div style={photoCard}>
                       <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Profile" style={photoImg} />
@@ -1430,7 +1715,6 @@ export default function EditProfile() {
                     </div>
                   </div>
 
-                  {/* RIGHT */}
                   <div style={rightGrid}>
                     <div style={fullNameWrap}>
                       <div style={label}>Full Name</div>
@@ -1473,7 +1757,6 @@ export default function EditProfile() {
           </div>
         </div>
 
-        {/* POPUPS */}
         <EditProfileModal open={editOpen} onClose={() => setEditOpen(false)} initialProfile={profile} onSaved={loadProfile} />
         <ChangePasswordModal open={pwOpen} onClose={() => setPwOpen(false)} onChanged={(text) => setMsg(text)} />
       </main>

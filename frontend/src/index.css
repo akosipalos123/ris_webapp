@@ -51,3 +51,626 @@ body {
   padding: 0;
   text-align: initial;
 }
+
+/* =========================================================
+   PROFILE PAGE (Responsive) — Scoped under .profileShell
+   ========================================================= */
+
+.profileShell {
+  --dark: #0b3d2e;
+  --bg: #ffffff;
+  --accent: #d36b1f;
+
+  --sidebar-open: 280px;
+  --sidebar-closed: 78px;
+
+  background: var(--bg);
+  min-height: 100dvh;
+  color: #0f172a;
+}
+
+/* ---------- LAYOUT MODES ---------- */
+.profileShell.desktop {
+  display: grid;
+  grid-template-columns: var(--sidebar-open) 1fr;
+  transition: grid-template-columns 180ms ease;
+}
+
+.profileShell.desktop.collapsed {
+  grid-template-columns: var(--sidebar-closed) 1fr;
+}
+
+.profileShell.narrow {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+/* ---------- BACKDROP (drawer) ---------- */
+.profileShell .profileBackdrop {
+  display: none;
+}
+
+.profileShell.narrow.drawerOpen .profileBackdrop {
+  display: block;
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 900;
+}
+
+/* ---------- SIDEBAR ---------- */
+.profileShell .profileSidebar {
+  background: linear-gradient(180deg, var(--dark) 0%, var(--dark) 65%, var(--accent) 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.profileShell.desktop .profileSidebar {
+  height: 100dvh;
+  position: sticky;
+  top: 0;
+}
+
+.profileShell.narrow .profileSidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+
+  width: min(84vw, 320px);
+  max-width: 320px;
+
+  transform: translateX(-120%);
+  transition: transform 180ms ease;
+  z-index: 1000;
+}
+
+.profileShell.narrow.drawerOpen .profileSidebar {
+  transform: translateX(0);
+}
+
+/* Sidebar header */
+.profileShell .sideHeader {
+  padding: 14px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.18);
+}
+
+.profileShell .headerBadge,
+.profileShell .headerBtn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  color: #fff;
+  display: grid;
+  place-items: center;
+  user-select: none;
+}
+
+.profileShell .headerBtn {
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.profileShell .brandRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.profileShell .brandIcon {
+  color: #fff;
+}
+
+.profileShell .brandText {
+  color: #fff;
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Nav */
+.profileShell .navWrap {
+  padding: 12px 12px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.profileShell .navLink {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  text-decoration: none;
+  font-weight: 800;
+  margin-bottom: 10px;
+
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.95);
+  border: 2px solid rgba(255, 255, 255, 0.12);
+
+  outline: none;
+}
+
+.profileShell .navLink:focus-visible {
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.25);
+}
+
+.profileShell .navLink.active {
+  background: #fff;
+  color: var(--dark);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+}
+
+.profileShell .navIcon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.profileShell .navLink.active .navIcon {
+  background: #fff;
+  color: var(--dark);
+  border-color: var(--dark);
+}
+
+.profileShell .navLabel {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Desktop collapsed nav */
+.profileShell.desktop.collapsed .navLink {
+  justify-content: center;
+  padding: 10px 0;
+  gap: 0;
+}
+
+.profileShell.desktop.collapsed .navLabel {
+  display: none;
+}
+
+.profileShell.desktop.collapsed .navIcon {
+  margin: 0;
+}
+
+/* Sidebar footer */
+.profileShell .sideFooter {
+  padding: 14px 14px 18px;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 700;
+  font-size: 12.5px;
+}
+
+.profileShell .footerRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* ---------- MAIN ---------- */
+.profileShell .profileMain {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Topbar */
+.profileShell .topbar {
+  flex: 0 0 auto;
+  background: linear-gradient(90deg, var(--dark) 0%, #1f5f45 100%);
+  color: #fff;
+  padding: 16px 18px;
+}
+
+.profileShell .topbarInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.profileShell .topTitleWrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.profileShell .burger {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  user-select: none;
+}
+
+.profileShell .homeTitle {
+  font-size: clamp(26px, 4vw, 40px);
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 62vw;
+}
+
+.profileShell .homeSub {
+  opacity: 0.95;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Account area */
+.profileShell .rightTop {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
+.profileShell .patientIdWrap {
+  text-align: right;
+  line-height: 1.1;
+}
+
+.profileShell .patientIdLabel {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.profileShell .patientIdValue {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.profileShell .profileToggleBtn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  cursor: pointer;
+}
+
+.profileShell .avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  background: #fff;
+  display: block;
+}
+
+.profileShell .chevronBox {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  line-height: 1;
+  font-weight: 900;
+  user-select: none;
+}
+
+/* Dropdown */
+.profileShell .dropdown {
+  position: absolute;
+  top: 62px;
+  right: 0;
+  width: min(320px, calc(100vw - 24px));
+  background: linear-gradient(180deg, var(--dark) 0%, #1c5a41 100%);
+  border-radius: 16px;
+  padding: 12px 14px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  z-index: 1200;
+}
+
+.profileShell .ddName {
+  font-weight: 900;
+  font-size: 16px;
+  color: #fff;
+}
+
+.profileShell .ddSub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  margin-top: 2px;
+}
+
+.profileShell .ddId {
+  color: #fff;
+  font-weight: 900;
+  margin-top: 2px;
+}
+
+.profileShell .ddDivider {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 999px;
+  margin: 10px 0;
+}
+
+.profileShell .ddActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.profileShell .ddBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  font-weight: 900;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+}
+
+.profileShell .ddBtnGhost {
+  background: transparent;
+  color: #fff;
+}
+
+.profileShell .ddBtnSolid {
+  background: #fff;
+  color: #0f172a;
+  border-color: rgba(255, 255, 255, 0.9);
+}
+
+.profileShell .ddBtnFull {
+  width: 100%;
+  background: #fff;
+  color: var(--dark);
+  border-color: rgba(255, 255, 255, 0.9);
+}
+
+/* ---------- CONTENT SCROLL AREA ---------- */
+.profileShell .content {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 0 24px 18px;
+}
+
+.profileShell .contentInner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-top: 14px;
+}
+
+/* Messages + misc */
+.profileShell .msgWarn {
+  padding: 10px 12px;
+  border: 1px solid #f59e0b;
+  background: #fffbeb;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  font-weight: 800;
+}
+
+.profileShell .muted {
+  color: #64748b;
+  font-weight: 700;
+}
+
+/* Section titles */
+.profileShell .sectionTitle {
+  font-size: clamp(20px, 2.4vw, 24px);
+  font-weight: 900;
+  margin: 10px 0 0;
+  line-height: 1.05;
+}
+
+.profileShell .sectionSub {
+  margin: 4px 0 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Pills: auto-fit makes it responsive without hardcoding columns */
+.profileShell .pillsRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.profileShell .pill {
+  border-radius: 999px;
+  border: 3px solid var(--dark);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  min-height: 52px;
+}
+
+.profileShell .pillLabel {
+  font-size: 12px;
+  color: #0f172a;
+  font-weight: 800;
+}
+
+.profileShell .pillValue {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--dark);
+  letter-spacing: 0.5px;
+}
+
+/* Panels: 2 columns on desktop, stacks on tablets/phones */
+.profileShell .panels {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  margin-top: 14px;
+  align-items: start;
+}
+
+.profileShell .panel {
+  border-radius: 28px;
+  border: 3px solid var(--dark);
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.profileShell .infoLabel {
+  font-size: 13px;
+  color: #0f172a;
+  margin-top: 10px;
+  font-weight: 800;
+}
+
+.profileShell .infoValue {
+  font-size: clamp(16px, 2vw, 20px);
+  font-weight: 900;
+  color: var(--dark);
+  margin-top: 2px;
+  line-height: 1.1;
+}
+
+.profileShell .infoValueWrap {
+  font-size: 18px;
+  word-break: break-word;
+}
+
+.profileShell .actionsRow {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.profileShell .btnPrimary,
+.profileShell .btnOutline {
+  text-decoration: none;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.profileShell .btnPrimary {
+  background: var(--dark);
+  color: #fff;
+}
+
+.profileShell .btnOutline {
+  border: 2px solid var(--dark);
+  color: var(--dark);
+}
+
+/* Updates list */
+.profileShell .updatesList {
+  margin-top: 10px;
+  padding-left: 18px;
+  color: #0f172a;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.profileShell .updateItem {
+  margin-bottom: 10px;
+}
+
+.profileShell .updateTitle {
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.profileShell .updateMeta {
+  font-size: 12px;
+  font-weight: 900;
+  color: #334155;
+  margin-right: 6px;
+}
+
+.profileShell .updateLink {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--dark);
+  text-decoration: underline;
+}
+
+/* ---------- RESPONSIVE TWEAKS ---------- */
+@media (max-width: 1024px) {
+  .profileShell .panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .profileShell .content {
+    padding: 0 14px 14px;
+  }
+
+  .profileShell .topbar {
+    padding: 14px 14px;
+  }
+
+  .profileShell .homeTitle {
+    max-width: 56vw;
+  }
+
+  .profileShell .patientIdWrap {
+    display: none; /* saves space on phones */
+  }
+
+  .profileShell .ddActions {
+    grid-template-columns: 1fr; /* stack buttons */
+  }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .profileShell.desktop {
+    transition: none;
+  }
+  .profileShell.narrow .profileSidebar {
+    transition: none;
+  }
+}

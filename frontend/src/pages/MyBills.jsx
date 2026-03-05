@@ -13,19 +13,16 @@ function money(n) {
 function asNumber(v) {
   if (v == null) return 0;
 
-  // number
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
 
-  // Mongo Decimal128 sometimes becomes object-like
   if (typeof v === "object") {
     if (typeof v.$numberDecimal === "string") return asNumber(v.$numberDecimal);
     if (typeof v.toString === "function") return asNumber(v.toString());
     return 0;
   }
 
-  // string (handles "200.00", "₱200.00", "Php 200.00", "200,000.00")
   if (typeof v === "string") {
-    const cleaned = v.replace(/[^0-9.-]/g, ""); // strip currency, commas, spaces
+    const cleaned = v.replace(/[^0-9.-]/g, "");
     const n = Number(cleaned);
     return Number.isFinite(n) ? n : 0;
   }
@@ -105,7 +102,6 @@ function filenameFromContentDisposition(cd) {
 function filenameFromUrl(u, fallback = "receipt") {
   if (!u) return fallback;
   try {
-    // URL() needs a base for relative URLs
     const url = new URL(u, window.location.href);
     let name = url.pathname.split("/").pop() || fallback;
     name = decodeURIComponent(name);
@@ -210,24 +206,56 @@ const DownloadIcon = (p) => (
   </Icon>
 );
 
+/* ---------- HELPERS ---------- */
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 export default function MyBills() {
   const nav = useNavigate();
   const loc = useLocation();
+
+  const DARK = "#0b3d2e";
+  const BG = "#ffffff";
+
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
 
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
   const [bills, setBills] = useState([]);
 
-  // profile (topbar)
   const [profile, setProfile] = useState(null);
 
-  // top-right dropdown
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
-  // sidebar
+  // desktop sidebar
   const [sideOpen, setSideOpen] = useState(true);
-  const toggleSidebar = () => setSideOpen((v) => !v);
+  const toggleSidebarDesktop = () => setSideOpen((v) => !v);
+
+  // mobile/tablet drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // receipt modal
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -269,6 +297,26 @@ export default function MyBills() {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
 
   // close dropdown on outside click / ESC
   useEffect(() => {
@@ -316,7 +364,11 @@ export default function MyBills() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
+    localStorage.removeItem("adminEmail");
     nav("/login");
   }
 
@@ -361,14 +413,12 @@ export default function MyBills() {
     };
   }, [selectedBill]);
 
-  // ✅ Ctrl+P behavior, but prints ONLY the receipt
   function printReceipt() {
     if (!receiptUrl) {
       setMsg("Receipt file is not available for this bill.");
       return;
     }
 
-    // PDFs: open the PDF itself, then print (receipt-only)
     if (receiptIsPdf) {
       const w = window.open(receiptUrl, "_blank", "noopener,noreferrer");
       if (!w) {
@@ -391,11 +441,9 @@ export default function MyBills() {
       return;
     }
 
-    // Images: print current page, but CSS ensures ONLY the receipt print area is visible
     window.print();
   }
 
-  // ✅ Download the same file shown in the preview
   async function downloadReceipt() {
     if (!receiptUrl) {
       setMsg("Receipt file is not available for this bill.");
@@ -425,21 +473,436 @@ export default function MyBills() {
 
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     } catch {
-      // Fallback: open in a new tab (user can download from browser)
       const a = document.createElement("a");
       a.href = receiptUrl;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
-      a.download = defaultName; // may be ignored cross-origin, but harmless
+      a.download = defaultName;
       document.body.appendChild(a);
       a.click();
       a.remove();
     }
   }
 
-  /* ---------- STYLES ---------- */
-  const DARK = "#0b3d2e";
-  const BG = "#ffffff";
+  /* ---------- SIDEBAR ITEMS (PATIENT ONLY) ---------- */
+  const SIDE_ITEMS = [
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
+    { label: "My Bills", to: "/bills", IconComp: BillsIcon, exact: true },
+    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon, exact: true },
+    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
+  ];
+
+  const isItemActive = (to, exact) => {
+    if (exact) return loc.pathname === to;
+    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
+  };
+
+  const PRINT_CSS = `
+    @media print {
+      body.receipt-print-open * {
+        visibility: hidden !important;
+      }
+
+      body.receipt-print-open #receipt-print-area,
+      body.receipt-print-open #receipt-print-area * {
+        visibility: visible !important;
+      }
+
+      body.receipt-print-open #receipt-print-area {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        background: #fff !important;
+        overflow: hidden !important;
+      }
+
+      body.receipt-print-open #receipt-print-area iframe,
+      body.receipt-print-open #receipt-print-area img {
+        width: 100% !important;
+        height: 100% !important;
+        border: 0 !important;
+        display: block !important;
+      }
+
+      @page { margin: 0; }
+    }
+  `;
+
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — uses global .profileShell CSS
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
+
+    const billCard = {
+      border: `2px solid ${DARK}`,
+      borderRadius: 16,
+      padding: 12,
+      background: "#fff",
+      display: "grid",
+      gap: 10,
+    };
+
+    const statusPillMobile = (statusRaw) => {
+      const s = String(statusRaw || "").toLowerCase();
+      const isPaid = s === "paid";
+      const isPending = s === "pending";
+
+      const bg = isPaid ? "#dcfce7" : isPending ? "#fee2e2" : "#fffbeb";
+      const color = isPaid ? "#166534" : isPending ? "#991b1b" : "#92400e";
+
+      return {
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontWeight: 900,
+        fontSize: 12,
+        background: bg,
+        color,
+        border: "1px solid rgba(0,0,0,.12)",
+        whiteSpace: "nowrap",
+      };
+    };
+
+    // ✅ Mobile-friendly receipt modal styling
+    const mOverlay = {
+      position: "fixed",
+      inset: 0,
+      background: "rgba(15, 23, 42, 0.55)",
+      display: "grid",
+      placeItems: "center",
+      zIndex: 2200,
+      padding: 14,
+    };
+
+    const mModal = {
+      width: "min(560px, 96vw)",
+      height: "min(88vh, 900px)",
+      background: "linear-gradient(180deg, rgba(11,61,46,.95) 0%, rgba(47,90,69,.95) 100%)",
+      borderRadius: 22,
+      boxShadow: "0 26px 70px rgba(0,0,0,.45)",
+      padding: "14px 14px 12px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 12,
+    };
+
+    const mHeader = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 };
+    const mTitle = { margin: 0, color: "#fff", fontWeight: 900, fontSize: 22, lineHeight: 1.1 };
+    const mClose = {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      border: "2px solid rgba(255,255,255,.45)",
+      background: "transparent",
+      color: "#fff",
+      fontWeight: 900,
+      cursor: "pointer",
+      display: "grid",
+      placeItems: "center",
+    };
+
+    const mMetaCard = {
+      background: "#fff",
+      borderRadius: 14,
+      padding: "10px 12px",
+      border: "2px solid rgba(255,255,255,.18)",
+      fontWeight: 900,
+      color: "#0f172a",
+      display: "grid",
+      gap: 6,
+    };
+
+    const mMetaRow = { display: "flex", justifyContent: "space-between", gap: 12 };
+    const mMetaKey = { opacity: 0.75 };
+    const mMetaVal = { textAlign: "right" };
+
+    const mPreviewOuter = { flex: 1, display: "flex", flexDirection: "column" };
+    const mPreviewInner = {
+      flex: 1,
+      background: "#fff",
+      borderRadius: 14,
+      overflow: "hidden",
+      border: "2px solid rgba(255,255,255,.18)",
+      display: "grid",
+      placeItems: "center",
+      minHeight: 260,
+    };
+
+    const mPreviewImg = { width: "100%", height: "100%", objectFit: "contain" };
+
+    const mFooter = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+    const mActionBtn = (disabled) => ({
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      padding: "10px 12px",
+      borderRadius: 12,
+      background: "#fff",
+      color: "#0f172a",
+      border: "2px solid rgba(0,0,0,.15)",
+      fontWeight: 900,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.6 : 1,
+      width: "100%",
+    });
+
+    return (
+      <div className={rootClass} style={{ "--dark": DARK, "--bg": BG }}>
+        <style>{PRINT_CSS}</style>
+
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button
+                  type="button"
+                  className="burger"
+                  title="Menu"
+                  onClick={() => setDrawerOpen((v) => !v)}
+                  aria-label="Open menu"
+                >
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">My Bills</div>
+                  <div className="homeSub">Review your bill status and history</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">Patient ID</div>
+                  <div className="patientIdValue">{patientIdShort}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{fullName || "Account"}</div>
+                    <div className="ddSub">Patient ID</div>
+                    <div className="ddId">{patientIdShort}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        <span aria-hidden="true">⎋</span>
+                        Sign Out
+                      </button>
+
+                      <Link to="/profile/edit" className="ddBtn ddBtnSolid" onClick={() => setMenuOpen(false)}>
+                        <span aria-hidden="true">✎</span>
+                        Edit Profile
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          {/* ✅ content wrapped in .panel so borders/details remain on phone */}
+          <div className="content">
+            <div className="contentInner">
+              {msg ? <div className="msgWarn">{msg}</div> : null}
+
+              <div className="panel" style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    className="btnOutline"
+                    onClick={loadAll}
+                    disabled={loading}
+                    style={{
+                      opacity: loading ? 0.6 : 1,
+                      cursor: loading ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {loading ? (
+                  <div className="muted">Loading...</div>
+                ) : bills.length === 0 ? (
+                  <div className="muted">No bills found yet.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {bills.map((b) => {
+                      const dateText = getBillDate(b);
+                      const procedureText = getBillProcedure(b);
+                      const billText = money(getBillAmount(b));
+                      const statusText = getBillStatus(b);
+                      const receiptExists = !!getReceiptRaw(b);
+
+                      return (
+                        <div key={b._id} style={billCard}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                            <div style={{ fontWeight: 900 }}>{dateText}</div>
+                            <span style={statusPillMobile(statusText)}>{statusText}</span>
+                          </div>
+
+                          <div style={{ fontWeight: 900, color: "#0f172a" }}>{procedureText}</div>
+                          <div style={{ fontWeight: 900, color: DARK }}>{billText}</div>
+
+                          <button type="button" className="btnPrimary" onClick={() => openReceipt(b)} style={{ width: "100%" }}>
+                            {receiptExists ? "View Receipt" : "View Details"}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* ✅ Mobile receipt modal (improved styling) */}
+        {receiptOpen ? (
+          <div style={mOverlay} onClick={closeReceipt} role="dialog" aria-modal="true" aria-label="Receipt dialog">
+            <div style={mModal} onClick={(e) => e.stopPropagation()}>
+              <div style={mHeader}>
+                <h2 style={mTitle}>{receiptUrl ? "Your Receipt" : "Bill Details"}</h2>
+                <button type="button" style={mClose} onClick={closeReceipt} aria-label="Close receipt">
+                  ✕
+                </button>
+              </div>
+
+              {selectedSummary ? (
+                <div style={mMetaCard}>
+                  <div style={mMetaRow}>
+                    <span style={mMetaKey}>Date</span>
+                    <span style={mMetaVal}>{selectedSummary.date}</span>
+                  </div>
+                  <div style={mMetaRow}>
+                    <span style={mMetaKey}>Procedure</span>
+                    <span style={mMetaVal}>{selectedSummary.procedure}</span>
+                  </div>
+                  <div style={mMetaRow}>
+                    <span style={mMetaKey}>Amount</span>
+                    <span style={mMetaVal}>{selectedSummary.amount}</span>
+                  </div>
+                  <div style={mMetaRow}>
+                    <span style={mMetaKey}>Status</span>
+                    <span style={mMetaVal}>{selectedSummary.status}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={mPreviewOuter}>
+                {/* print CSS will print ONLY this area */}
+                <div style={mPreviewInner} id="receipt-print-area">
+                  {receiptUrl ? (
+                    receiptIsPdf ? (
+                      <iframe title="Receipt PDF" src={receiptUrl} style={{ width: "100%", height: "100%", border: 0 }} />
+                    ) : (
+                      <img src={receiptUrl} alt="Receipt" style={mPreviewImg} />
+                    )
+                  ) : (
+                    <div style={{ color: "#64748b", fontWeight: 900 }}>Receipt preview unavailable</div>
+                  )}
+                </div>
+              </div>
+
+              <div style={mFooter}>
+                <button type="button" style={mActionBtn(!receiptUrl)} onClick={printReceipt} disabled={!receiptUrl}>
+                  <PrintIcon size={18} />
+                  Print
+                </button>
+
+                <button type="button" style={mActionBtn(!receiptUrl)} onClick={downloadReceipt} disabled={!receiptUrl}>
+                  <DownloadIcon size={18} />
+                  Download
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
 
   const SIDEBAR_OPEN_W = 280;
   const SIDEBAR_CLOSED_W = 78;
@@ -756,7 +1219,7 @@ export default function MyBills() {
     opacity: disabled ? 0.75 : 1,
   });
 
-  /* ---------- RECEIPT MODAL STYLES ---------- */
+  /* ---------- RECEIPT MODAL (DESKTOP) ---------- */
   const overlay = {
     position: "fixed",
     inset: 0,
@@ -833,58 +1296,9 @@ export default function MyBills() {
     opacity: disabled ? 0.6 : 1,
   });
 
-  /* ---------- SIDEBAR ITEMS (PATIENT ONLY) ---------- */
-  const SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
-    { label: "My Bills", to: "/bills", IconComp: BillsIcon, exact: true },
-    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon, exact: true },
-    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
-  ];
-
-  const isItemActive = (to, exact) => {
-    if (exact) return loc.pathname === to;
-    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
-  };
-
   return (
     <div style={shell}>
-      {/* Print CSS: when receipt modal is open, print ONLY the receipt preview */}
-      <style>{`
-        @media print {
-          body.receipt-print-open * {
-            visibility: hidden !important;
-          }
-
-          body.receipt-print-open #receipt-print-area,
-          body.receipt-print-open #receipt-print-area * {
-            visibility: visible !important;
-          }
-
-          body.receipt-print-open #receipt-print-area {
-            position: fixed !important;
-            inset: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            background: #fff !important;
-            overflow: hidden !important;
-          }
-
-          body.receipt-print-open #receipt-print-area iframe,
-          body.receipt-print-open #receipt-print-area img {
-            width: 100% !important;
-            height: 100% !important;
-            border: 0 !important;
-            display: block !important;
-          }
-
-          @page { margin: 0; }
-        }
-      `}</style>
+      <style>{PRINT_CSS}</style>
 
       {/* LEFT SIDEBAR */}
       <aside style={sidebar}>
@@ -903,7 +1317,7 @@ export default function MyBills() {
           )}
 
           {sideOpen ? (
-            <button type="button" style={headerBtn} onClick={toggleSidebar} aria-label="Collapse sidebar" title="Collapse">
+            <button type="button" style={headerBtn} onClick={toggleSidebarDesktop} aria-label="Collapse sidebar" title="Collapse">
               ☰
             </button>
           ) : null}
@@ -958,7 +1372,7 @@ export default function MyBills() {
         <div style={topbar}>
           <div style={topTitleWrap}>
             {!sideOpen ? (
-              <div style={burger} title="Menu" onClick={toggleSidebar}>
+              <div style={burger} title="Menu" onClick={toggleSidebarDesktop}>
                 ☰
               </div>
             ) : null}
@@ -969,7 +1383,6 @@ export default function MyBills() {
             </div>
           </div>
 
-          {/* Patient dropdown */}
           <div style={rightTop} ref={menuRef}>
             <div style={patientIdWrap}>
               <div style={patientIdLabel}>Patient ID</div>
@@ -1040,10 +1453,8 @@ export default function MyBills() {
                 bills.map((b) => {
                   const dateText = getBillDate(b);
                   const procedureText = getBillProcedure(b);
-                  const billAmount = getBillAmount(b);
-                  const billText = money(billAmount);
+                  const billText = money(getBillAmount(b));
                   const statusText = getBillStatus(b);
-
                   const receiptExists = !!getReceiptRaw(b);
 
                   return (
@@ -1096,7 +1507,6 @@ export default function MyBills() {
             ) : null}
 
             <div style={previewOuter}>
-              {/* ✅ This is the ONLY thing that will print when the modal is open */}
               <div style={previewInner} id="receipt-print-area">
                 {receiptUrl ? (
                   receiptIsPdf ? (

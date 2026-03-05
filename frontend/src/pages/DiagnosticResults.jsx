@@ -92,12 +92,10 @@ const BrandIcon = (p) => (
 
 /* ---------- HELPERS ---------- */
 function apptToYMD(a) {
-  // preferred (no timezone ambiguity)
   if (a?.year && a?.month && a?.day) {
     return `${String(a.year)}-${String(a.month).padStart(2, "0")}-${String(a.day).padStart(2, "0")}`;
   }
 
-  // fallback: ISO string date => slice first 10 chars (stable)
   if (a?.date) {
     const s = String(a.date);
     if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
@@ -117,9 +115,40 @@ function formatMDY(a) {
   return `${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/${y}`;
 }
 
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 export default function DiagnosticResults() {
   const nav = useNavigate();
   const loc = useLocation();
+
+  const DARK = "#0b3d2e";
+  const BG = "#ffffff";
+
+  // Mobile/Tablet uses NEW layout; Desktop/Laptop uses OLD layout
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
 
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -130,9 +159,12 @@ export default function DiagnosticResults() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
-  // sidebar
+  // desktop sidebar
   const [sideOpen, setSideOpen] = useState(true);
-  const toggleSidebar = () => setSideOpen((v) => !v);
+  const toggleSidebarDesktop = () => setSideOpen((v) => !v);
+
+  // mobile drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // filters
   const [filters, setFilters] = useState({
@@ -153,7 +185,6 @@ export default function DiagnosticResults() {
       setLoading(true);
       setMsg("");
 
-      // profile for header + role checks
       try {
         const me = await apiGet("/api/auth/me", token);
         setProfile(me);
@@ -161,7 +192,6 @@ export default function DiagnosticResults() {
         // ignore
       }
 
-      // completed appointments only
       const data = await apiGet("/api/appointments/mine-filtered?status=Completed", token);
       setAppointments(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -175,6 +205,26 @@ export default function DiagnosticResults() {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
 
   // close dropdown on outside click / ESC
   useEffect(() => {
@@ -211,7 +261,12 @@ export default function DiagnosticResults() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
+    // Clear both (prevents mixed sessions)
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
+    localStorage.removeItem("adminEmail");
     nav("/login");
   }
 
@@ -272,7 +327,6 @@ export default function DiagnosticResults() {
     });
   }, [appointments, filters]);
 
-  // modal file url
   const pdfUrl = useMemo(() => {
     if (!selected) return "";
     const raw = selected.resultPdfUrl || selected.resultPdfPath || selected.pdfUrl || selected.pdf || "";
@@ -292,16 +346,14 @@ export default function DiagnosticResults() {
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
     { label: "My Bills", to: "/bills", IconComp: BillsIcon },
-    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon },
+    { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon, exact: true },
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
-  // ✅ aligned with your current App.jsx routes
-  // (Icons can be reused; only labels change is OK)
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: CalendarIcon }, // admin can book here
+    { label: "Appointment Booking", to: "/appointments", IconComp: CalendarIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
     { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
@@ -313,10 +365,409 @@ export default function DiagnosticResults() {
     return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
   };
 
-  /* ---------- STYLES (patterned to screenshot) ---------- */
-  const DARK = "#0b3d2e";
-  const BG = "#ffffff";
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — uses global .profileShell CSS
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
 
+    const mLabel = { fontSize: 13, fontWeight: 900, color: "#0f172a", marginBottom: 6 };
+    const mControl = {
+      width: "100%",
+      padding: "12px 12px",
+      borderRadius: 12,
+      border: `2px solid ${DARK}`,
+      background: "#fff",
+      color: "#0f172a",
+      fontWeight: 900,
+      outline: "none",
+    };
+    const mFilters = { display: "grid", gridTemplateColumns: "1fr", gap: 12 };
+    const mBtnRow = { display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 };
+    const mBtn = (disabled = false) => ({
+      padding: "10px 12px",
+      borderRadius: 12,
+      fontWeight: 900,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.65 : 1,
+      border: `2px solid ${DARK}`,
+      background: "#fff",
+      color: DARK,
+      flex: 1,
+      minWidth: 140,
+    });
+
+    const card = {
+      border: `2px solid ${DARK}`,
+      borderRadius: 16,
+      padding: 12,
+      background: "#fff",
+      display: "grid",
+      gap: 10,
+    };
+
+    // Mobile modal
+    const mOverlay = {
+      position: "fixed",
+      inset: 0,
+      background: "rgba(15, 23, 42, 0.55)",
+      display: "grid",
+      placeItems: "center",
+      zIndex: 2200,
+      padding: 14,
+    };
+
+    const mModal = {
+      width: "min(680px, 96vw)",
+      height: "min(88vh, 980px)",
+      background: "linear-gradient(180deg, rgba(11,61,46,.95) 0%, rgba(47,90,69,.95) 100%)",
+      borderRadius: 22,
+      boxShadow: "0 26px 70px rgba(0,0,0,.45)",
+      padding: "14px 14px 12px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 12,
+    };
+
+    const mHeader = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 };
+    const mTitle = { margin: 0, color: "#fff", fontWeight: 900, fontSize: 22, lineHeight: 1.1 };
+    const mClose = {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      border: "2px solid rgba(255,255,255,.45)",
+      background: "transparent",
+      color: "#fff",
+      fontWeight: 900,
+      cursor: "pointer",
+      display: "grid",
+      placeItems: "center",
+    };
+
+    const mMetaCard = {
+      background: "#fff",
+      borderRadius: 14,
+      padding: "10px 12px",
+      border: "2px solid rgba(255,255,255,.18)",
+      fontWeight: 900,
+      color: "#0f172a",
+      display: "grid",
+      gap: 6,
+    };
+
+    const mMetaRow = { display: "flex", justifyContent: "space-between", gap: 12 };
+    const mMetaKey = { opacity: 0.75 };
+    const mMetaVal = { textAlign: "right" };
+
+    const mNotes = {
+      background: "rgba(255,255,255,.10)",
+      borderRadius: 14,
+      padding: "10px 12px",
+      border: "2px solid rgba(255,255,255,.18)",
+      color: "#fff",
+      fontWeight: 800,
+      whiteSpace: "pre-wrap",
+      lineHeight: 1.5,
+    };
+
+    const mPreviewWrap = { flex: 1, display: "flex", flexDirection: "column", gap: 8, minHeight: 220 };
+    const mPreviewInner = {
+      flex: 1,
+      background: "#fff",
+      borderRadius: 14,
+      overflow: "hidden",
+      border: "2px solid rgba(255,255,255,.18)",
+      display: "grid",
+      placeItems: "center",
+      minHeight: 260,
+    };
+
+    const mFooter = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+    const mFooterFull = { display: "grid", gridTemplateColumns: "1fr", gap: 10 };
+    const mActionBtn = (variant = "light") => ({
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      padding: "10px 12px",
+      borderRadius: 12,
+      fontWeight: 900,
+      cursor: "pointer",
+      textDecoration: "none",
+      width: "100%",
+      border: variant === "light" ? "2px solid rgba(0,0,0,.15)" : `2px solid ${DARK}`,
+      background: variant === "light" ? "#fff" : DARK,
+      color: variant === "light" ? "#0f172a" : "#fff",
+    });
+
+    return (
+      <div className={rootClass} style={{ "--dark": DARK, "--bg": BG }}>
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button
+                  type="button"
+                  className="burger"
+                  title="Menu"
+                  onClick={() => setDrawerOpen((v) => !v)}
+                  aria-label="Open menu"
+                >
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">Diagnostic Results</div>
+                  <div className="homeSub">View your completed reports</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">{idLabel}</div>
+                  <div className="patientIdValue">{patientIdShort}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{fullName || (isAdmin ? "Admin" : "Patient")}</div>
+                    <div className="ddSub">{idLabel}</div>
+                    <div className="ddId">{patientIdShort}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        <span aria-hidden="true">⎋</span>
+                        Sign Out
+                      </button>
+
+                      <Link to="/profile/edit" className="ddBtn ddBtnSolid" onClick={() => setMenuOpen(false)}>
+                        <span aria-hidden="true">✎</span>
+                        Edit Profile
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            <div className="contentInner">
+              {msg ? <div className="msgWarn">{msg}</div> : null}
+
+              {/* ✅ keep borders/details on phone: wrap content in .panel */}
+              <div className="panel" style={{ marginTop: 12 }}>
+                <div style={mFilters}>
+                  <div>
+                    <div style={mLabel}>Status</div>
+                    <select name="status" value={filters.status} onChange={onFilterChange} style={mControl}>
+                      {statusOptions.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div style={mLabel}>Procedure</div>
+                    <select name="procedure" value={filters.procedure} onChange={onFilterChange} style={mControl}>
+                      {procedureOptions.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div style={mLabel}>Date</div>
+                    <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={mControl} />
+                  </div>
+
+                  <div style={mBtnRow}>
+                    <button type="button" style={mBtn(loading)} onClick={loadAll} disabled={loading}>
+                      Refresh
+                    </button>
+                    <button type="button" style={mBtn(false)} onClick={resetFilters}>
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                  {loading ? (
+                    <div className="muted">Loading...</div>
+                  ) : filtered.length === 0 ? (
+                    <div className="muted">No results found.</div>
+                  ) : (
+                    filtered.map((a) => (
+                      <div key={a._id} style={card}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ fontWeight: 900 }}>{formatMDY(a)}</div>
+                          <div style={{ fontWeight: 900, color: DARK, fontSize: 12 }}>{a.status || "Completed"}</div>
+                        </div>
+
+                        <div style={{ fontWeight: 900, color: "#0f172a" }}>{a.procedure || "-"}</div>
+
+                        <button type="button" className="btnPrimary" onClick={() => openViewModal(a)} style={{ width: "100%" }}>
+                          View Result
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* ✅ Mobile View Modal (improved) */}
+        {viewOpen ? (
+          <div style={mOverlay} onClick={closeViewModal} role="dialog" aria-modal="true" aria-label="Result preview">
+            <div style={mModal} onClick={(e) => e.stopPropagation()}>
+              <div style={mHeader}>
+                <h2 style={mTitle}>Diagnostic Result</h2>
+                <button type="button" style={mClose} onClick={closeViewModal} aria-label="Close">
+                  ✕
+                </button>
+              </div>
+
+              <div style={mMetaCard}>
+                <div style={mMetaRow}>
+                  <span style={mMetaKey}>Date</span>
+                  <span style={mMetaVal}>{selected ? formatMDY(selected) : "-"}</span>
+                </div>
+                <div style={mMetaRow}>
+                  <span style={mMetaKey}>Procedure</span>
+                  <span style={mMetaVal}>{selected?.procedure || "-"}</span>
+                </div>
+              </div>
+
+              <div style={mNotes}>
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>Notes</div>
+                <div style={{ opacity: 0.95 }}>{selected?.resultNotes ? selected.resultNotes : "—"}</div>
+              </div>
+
+              <div style={mPreviewWrap}>
+                <div style={{ color: "#fff", fontWeight: 900 }}>Attachment Preview</div>
+                <div style={mPreviewInner}>
+                  {pdfUrl ? (
+                    pdfIsPdf ? (
+                      <iframe title="Result PDF" src={pdfUrl} style={{ width: "100%", height: "100%", border: 0 }} />
+                    ) : (
+                      <img src={pdfUrl} alt="Result file" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                    )
+                  ) : (
+                    <div style={{ padding: 18, color: "#64748b", fontWeight: 900 }}>No PDF/attachment available.</div>
+                  )}
+                </div>
+              </div>
+
+              {selected?._id ? (
+                <div style={mFooterFull}>
+                  <Link to={`/report/${selected._id}`} style={mActionBtn("dark")} onClick={closeViewModal}>
+                    Open Full Report
+                  </Link>
+                </div>
+              ) : null}
+
+              <div style={mFooter}>
+                {pdfUrl ? (
+                  <a href={pdfUrl} target="_blank" rel="noreferrer" style={mActionBtn("light")}>
+                    Open PDF
+                  </a>
+                ) : (
+                  <button type="button" style={{ ...mActionBtn("light"), opacity: 0.6, cursor: "not-allowed" }} disabled>
+                    Open PDF
+                  </button>
+                )}
+
+                <button type="button" style={mActionBtn("light")} onClick={closeViewModal}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
+
+  /* ---------- STYLES (patterned to screenshot) ---------- */
   const SIDEBAR_OPEN_W = 280;
   const SIDEBAR_CLOSED_W = 78;
 
@@ -417,7 +868,7 @@ export default function DiagnosticResults() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "0 24px 16px", // ✅ no top white space
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
@@ -427,7 +878,7 @@ export default function DiagnosticResults() {
 
   const topbar = {
     height: 84,
-    borderRadius: "0 0 22px 22px", // ✅ flush to top
+    borderRadius: "0 0 22px 22px",
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",
@@ -790,7 +1241,7 @@ export default function DiagnosticResults() {
           )}
 
           {sideOpen ? (
-            <button type="button" style={headerBtn} onClick={toggleSidebar} aria-label="Collapse sidebar" title="Collapse">
+            <button type="button" style={headerBtn} onClick={toggleSidebarDesktop} aria-label="Collapse sidebar" title="Collapse">
               ☰
             </button>
           ) : null}
@@ -845,7 +1296,7 @@ export default function DiagnosticResults() {
         <div style={topbar}>
           <div style={topTitleWrap}>
             {!sideOpen ? (
-              <div style={burger} title="Menu" onClick={toggleSidebar}>
+              <div style={burger} title="Menu" onClick={toggleSidebarDesktop}>
                 ☰
               </div>
             ) : null}
@@ -1024,7 +1475,11 @@ export default function DiagnosticResults() {
                     pdfIsPdf ? (
                       <iframe title="Result PDF" src={pdfUrl} style={{ width: "100%", height: "100%", border: 0 }} />
                     ) : (
-                      <img src={pdfUrl} alt="Result file" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      <img
+                        src={pdfUrl}
+                        alt="Result file"
+                        style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                      />
                     )
                   ) : (
                     <div style={{ padding: 18, color: "#0f172a", fontWeight: 900 }}>No PDF/attachment available.</div>

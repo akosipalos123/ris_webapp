@@ -1,6 +1,6 @@
 // frontend/src/pages/BookAppointment.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiPost, apiGet } from "../api";
+import { apiPost, apiGet, apiPatch } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import {
@@ -10,7 +10,6 @@ import {
 } from "../constants/procedures";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
-
 
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
@@ -207,7 +206,10 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valueIso]);
 
-  const label = useMemo(() => view.toLocaleString(undefined, { month: "long", year: "numeric" }), [view]);
+  const label = useMemo(
+    () => view.toLocaleString(undefined, { month: "long", year: "numeric" }),
+    [view]
+  );
 
   const prevDisabled = useMemo(() => {
     const prevMonthEnd = new Date(view.getFullYear(), view.getMonth(), 0);
@@ -222,7 +224,11 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
     const gridStart = new Date(view.getFullYear(), view.getMonth(), 1 - startDow);
 
     return Array.from({ length: 42 }, (_, i) => {
-      const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+      const d = new Date(
+        gridStart.getFullYear(),
+        gridStart.getMonth(),
+        gridStart.getDate() + i
+      );
       const iso = toLocalISODate(d);
       return {
         d,
@@ -236,10 +242,19 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
         <button
           type="button"
-          onClick={() => setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() - 1, 1)))}
+          onClick={() =>
+            setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() - 1, 1)))
+          }
           disabled={prevDisabled}
           style={{
             width: 34,
@@ -260,7 +275,9 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
 
         <button
           type="button"
-          onClick={() => setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() + 1, 1)))}
+          onClick={() =>
+            setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() + 1, 1)))
+          }
           style={{
             width: 34,
             height: 34,
@@ -276,7 +293,14 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 8 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 4,
+          marginTop: 8,
+        }}
+      >
         {week.map((w) => (
           <div
             key={w}
@@ -297,7 +321,14 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 4 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 4,
+          marginTop: 4,
+        }}
+      >
         {days.map(({ d, iso, inMonth, disabled, selected: isSelected }) => {
           const canClick = !disabled;
           return (
@@ -480,7 +511,9 @@ export default function BookAppointment() {
       return;
     }
 
-    const q = `?procedure=${encodeURIComponent(form.procedure)}&date=${encodeURIComponent(form.date)}`;
+    const q = `?procedure=${encodeURIComponent(form.procedure)}&date=${encodeURIComponent(
+      form.date
+    )}`;
     setCheckingAvail(true);
 
     apiGet(`/api/appointments/availability${q}`, token)
@@ -491,9 +524,11 @@ export default function BookAppointment() {
 
   const activeStatuses = useMemo(() => new Set(["Pending", "Approved"]), []);
   const hasActiveSameProcedure =
-    !!form.procedure && appointments.some((a) => a.procedure === form.procedure && activeStatuses.has(a.status));
+    !!form.procedure &&
+    appointments.some((a) => a.procedure === form.procedure && activeStatuses.has(a.status));
 
-  const noSlots = availability && typeof availability.remaining === "number" && availability.remaining <= 0;
+  const noSlots =
+    availability && typeof availability.remaining === "number" && availability.remaining <= 0;
   const submitDisabled = saving || uploadingSlip || checkingAvail || noSlots || hasActiveSameProcedure;
 
   async function uploadRequestSlip(token, appointmentId, file) {
@@ -564,19 +599,19 @@ export default function BookAppointment() {
     }
   }
 
-  // Cancel appointment (UPDATE endpoint if different)
+  // ✅ Cancel appointment (PATCH /api/appointments/:id/cancel)
   async function cancelAppointment(appointmentId) {
     const token = localStorage.getItem("token");
     if (!token) return nav("/login");
 
     try {
       setMsg("");
-      // ✅ adjust to your backend if needed:
-      await apiPost(`/api/appointments/${appointmentId}/cancel`, {}, token);
+      // apiPatch signature supports (path, token, body) — use this to avoid argument shift
+      await apiPatch(`/api/appointments/${appointmentId}/cancel`, token, {});
       await loadAll();
       setMsg("Appointment cancelled.");
     } catch (err) {
-      setMsg(err.message || "Cancel failed (check cancel endpoint).");
+      setMsg(err.message || "Cancel failed.");
     }
   }
 
@@ -588,7 +623,9 @@ export default function BookAppointment() {
 
   const fullName = useMemo(() => {
     if (!profile) return "";
-    const base = [profile.lastName, profile.firstName, profile.middleName].filter(Boolean).join(", ");
+    const base = [profile.lastName, profile.firstName, profile.middleName]
+      .filter(Boolean)
+      .join(", ");
     return `${base}${profile.suffix ? `, ${profile.suffix}` : ""}`;
   }, [profile]);
 
@@ -633,7 +670,8 @@ export default function BookAppointment() {
 
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
   // Adjust this based on what your /api/auth/me returns:
-  const isAdmin = profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
+  const isAdmin =
+    profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
 
   /* ---------- STYLES ---------- */
   const DARK = "#0b3d2e";
@@ -722,7 +760,12 @@ export default function BookAppointment() {
     border: active ? "2px solid rgba(255,255,255,.95)" : "2px solid rgba(255,255,255,.12)",
   });
 
-  const navItemClosedWrap = { display: "flex", justifyContent: "center", marginBottom: 12, textDecoration: "none" };
+  const navItemClosedWrap = {
+    display: "flex",
+    justifyContent: "center",
+    marginBottom: 12,
+    textDecoration: "none",
+  };
 
   const navIconBtn = (active) => ({
     width: 46,
@@ -735,7 +778,12 @@ export default function BookAppointment() {
     border: active ? `2px solid ${DARK}` : "2px solid rgba(255,255,255,.25)",
   });
 
-  const sideFooter = { padding: "14px 14px 18px", color: "rgba(255,255,255,.92)", fontWeight: 700, fontSize: 12.5 };
+  const sideFooter = {
+    padding: "14px 14px 18px",
+    color: "rgba(255,255,255,.92)",
+    fontWeight: 700,
+    fontSize: 12.5,
+  };
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
@@ -828,7 +876,12 @@ export default function BookAppointment() {
 
   const ddName = { fontWeight: 900, fontSize: 16, color: "#fff" };
   const ddSub = { fontSize: 12, color: "rgba(255,255,255,.85)", marginTop: 2 };
-  const ddDivider = { height: 2, background: "rgba(255,255,255,.6)", borderRadius: 999, margin: "10px 0 10px" };
+  const ddDivider = {
+    height: 2,
+    background: "rgba(255,255,255,.6)",
+    borderRadius: 999,
+    margin: "10px 0 10px",
+  };
 
   const ddActions = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
 
@@ -846,8 +899,18 @@ export default function BookAppointment() {
     whiteSpace: "nowrap",
   };
 
-  const ddSignOutBtn = { ...ddBtnBase, background: "transparent", color: "#fff", border: "2px solid rgba(255,255,255,.75)" };
-  const ddEditBtn = { ...ddBtnBase, background: "#fff", color: "#0f172a", border: "2px solid rgba(255,255,255,.9)" };
+  const ddSignOutBtn = {
+    ...ddBtnBase,
+    background: "transparent",
+    color: "#fff",
+    border: "2px solid rgba(255,255,255,.75)",
+  };
+  const ddEditBtn = {
+    ...ddBtnBase,
+    background: "#fff",
+    color: "#0f172a",
+    border: "2px solid rgba(255,255,255,.9)",
+  };
 
   const content = { flex: "1 1 auto", overflow: "auto", paddingRight: 4 };
   const contentWrap = { maxWidth: 1180 };
@@ -1084,7 +1147,8 @@ export default function BookAppointment() {
   });
 
   const hintLine = (tone) => ({
-    color: tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
+    color:
+      tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
     fontWeight: 900,
     fontSize: 13,
     marginTop: 6,
@@ -1423,9 +1487,7 @@ export default function BookAppointment() {
                       <div style={{ marginTop: 8 }}>
                         <div style={procWrap}>
                           <div style={{ minWidth: 240 }}>
-
                             <select className="syn-procedure-select" name="procedure" value={form.procedure} onChange={onBookChange} style={select} required>
-
                               <option value="">Type of Procedure</option>
                               {XRAY_PROCEDURE_ITEMS.map((x) => (
                                 <option key={x.code} value={x.label}>
@@ -1527,9 +1589,6 @@ export default function BookAppointment() {
             </div>
           </div>
         ) : null}
-
-        {/* Placeholder style for placeholders */}
-
 
         <style>{`
           .syn-input::placeholder { color: rgba(255,255,255,.65); }

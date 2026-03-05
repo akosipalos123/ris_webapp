@@ -2,30 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiUpload, apiPatch } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { XRAY_BILLING_ITEMS, formatPhp, findXrayBillingByLabel } from "../constants/procedures";
 
-const PROCEDURES = ["X-Ray"];
 const STATUSES = ["Pending", "Approved", "Rejected", "Cancelled", "Completed"];
-
-// ✅ Billing catalog (X-Ray)
-const XRAY_BILLING_ITEMS = [
-  { code: "CHEST_ADULT", label: "Chest — Adult (above 12 y.o.)", fee: 200.0 },
-  { code: "CHEST_PEDIA", label: "Chest — Pedia (0 to 12 y.o.)", fee: 240.0 },
-  { code: "EXTREMITIES", label: "Extremities (Upper and Lower)", fee: 260.0 },
-  { code: "JOINTS", label: "Joints", fee: 260.0 },
-  { code: "SKULL", label: "Skull", fee: 300.0 },
-  { code: "VERTEBRAL_COLUMN", label: "Vertebral Column", fee: 380.0 },
-  { code: "FOREIGN_BODY_LOCALIZATION", label: "Localization of Foreign Body", fee: 260.0 },
-  { code: "PELVIS", label: "Pelvis", fee: 300.0 },
-  { code: "SHOULDER_GIRDLE", label: "Shoulder Girdle", fee: 240.0 },
-  { code: "THORACIC_CAGE", label: "Thoracic Cage", fee: 200.0 },
-  { code: "ABDOMEN", label: "Abdomen", fee: 380.0 },
-];
-
-function formatPhp(n) {
-  const num = Number(n);
-  if (Number.isNaN(num)) return "Php 0.00";
-  return `Php ${num.toFixed(2)}`;
-}
 
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
@@ -142,7 +121,7 @@ export default function AdminAppointments() {
   const [completeNotes, setCompleteNotes] = useState("");
   const [completeSaving, setCompleteSaving] = useState(false);
 
-  // ✅ NEW: Billing state
+  // ✅ Billing state
   const [completeBillingCode, setCompleteBillingCode] = useState("");
 
   const selectedBilling = useMemo(() => {
@@ -275,7 +254,11 @@ export default function AdminAppointments() {
     setCompleteAppt(appt);
     setCompletePdf(null);
     setCompleteNotes("");
-    setCompleteBillingCode(""); // ✅ reset billing selection
+
+    // ✅ Auto-select billing based on what user booked (procedure label)
+    const match = findXrayBillingByLabel(appt?.procedure);
+    setCompleteBillingCode(match ? match.code : "");
+
     setShowCompleteModal(true);
   }
 
@@ -285,7 +268,7 @@ export default function AdminAppointments() {
     setCompleteAppt(null);
     setCompletePdf(null);
     setCompleteNotes("");
-    setCompleteBillingCode(""); // ✅ reset billing selection
+    setCompleteBillingCode("");
   }
 
   async function submitComplete() {
@@ -311,7 +294,7 @@ export default function AdminAppointments() {
       fd.append("resultPdf", completePdf);
       fd.append("notes", completeNotes.trim());
 
-      // ✅ NEW: billing fields (sent with completion)
+      // ✅ billing fields (sent with completion)
       fd.append("billingCode", selectedBilling.code);
       fd.append("billingLabel", selectedBilling.label);
       fd.append("billingAmount", selectedBilling.fee.toFixed(2));
@@ -331,7 +314,13 @@ export default function AdminAppointments() {
   const adminIdShort = useMemo(() => shortId(adminProfile?._id), [adminProfile]);
 
   const statusOptions = useMemo(() => ["All", ...STATUSES], []);
-  const procedureOptions = useMemo(() => ["All", ...PROCEDURES], []);
+
+  // ✅ Auto-fill procedures from what BookAppointment can save + anything already in DB
+  const procedureOptions = useMemo(() => {
+    const s = new Set(XRAY_BILLING_ITEMS.map((x) => x.label));
+    for (const a of rows) if (a?.procedure) s.add(a.procedure); // keep legacy values
+    return ["All", ...Array.from(s)];
+  }, [rows]);
 
   const busy = loading || checkingAdmin || completeSaving;
 
@@ -439,7 +428,7 @@ export default function AdminAppointments() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "0 24px 16px", // ✅ no top white space
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
@@ -449,7 +438,7 @@ export default function AdminAppointments() {
 
   const topbar = {
     height: 84,
-    borderRadius: "0 0 22px 22px", // ✅ flush to top
+    borderRadius: "0 0 22px 22px",
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",
@@ -926,13 +915,7 @@ export default function AdminAppointments() {
 
               <div>
                 <div style={filterLabel}>Procedure</div>
-                <select
-                  name="procedure"
-                  value={filters.procedure}
-                  onChange={onFilterChange}
-                  style={filterControl}
-                  disabled={busy}
-                >
+                <select name="procedure" value={filters.procedure} onChange={onFilterChange} style={filterControl} disabled={busy}>
                   {procedureOptions.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -943,25 +926,14 @@ export default function AdminAppointments() {
 
               <div>
                 <div style={filterLabel}>Date</div>
-                <input
-                  type="date"
-                  name="date"
-                  value={filters.date}
-                  onChange={onFilterChange}
-                  style={filterControl}
-                  disabled={busy}
-                />
+                <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={filterControl} disabled={busy} />
               </div>
 
               <div style={filterBtns}>
                 <button type="button" style={filterBtn(busy)} onClick={load} disabled={busy}>
                   Refresh
                 </button>
-                <button
-                  type="button"
-                  style={filterBtn(false)}
-                  onClick={() => setFilters({ status: "All", procedure: "All", date: "" })}
-                >
+                <button type="button" style={filterBtn(false)} onClick={() => setFilters({ status: "All", procedure: "All", date: "" })}>
                   Reset Filters
                 </button>
               </div>
@@ -1053,7 +1025,7 @@ export default function AdminAppointments() {
               <div style={modalInner}>
                 <div style={card}>
                   <div style={{ display: "grid", gap: 12 }}>
-                    {/* ✅ NEW: Billing selection */}
+                    {/* Billing selection */}
                     <div>
                       <div style={cardLabel}>Procedure Done / Billing *</div>
                       <select

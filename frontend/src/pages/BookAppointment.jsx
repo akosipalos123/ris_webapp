@@ -3,7 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiPost, apiGet } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
+import {
+  XRAY_BILLING_ITEMS as XRAY_PROCEDURE_ITEMS,
+  XRAY_PROCEDURE_LABELS,
+  formatPhp,
+} from "../constants/procedures";
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
@@ -592,8 +599,12 @@ export default function BookAppointment() {
   }, [appointments]);
 
   const procedureOptions = useMemo(() => {
-    const s = new Set(["X-Ray"]);
+    // ✅ start from your standard catalog (new procedure types)
+    const s = new Set(XRAY_PROCEDURE_LABELS);
+
+    // keep any legacy/extra procedures already in DB so filters won't break
     for (const a of appointments) if (a?.procedure) s.add(a.procedure);
+
     return ["All", ...Array.from(s)];
   }, [appointments]);
 
@@ -1412,9 +1423,15 @@ export default function BookAppointment() {
                       <div style={{ marginTop: 8 }}>
                         <div style={procWrap}>
                           <div style={{ minWidth: 240 }}>
-                            <select name="procedure" value={form.procedure} onChange={onBookChange} style={select} required>
+
+                            <select className="syn-procedure-select" name="procedure" value={form.procedure} onChange={onBookChange} style={select} required>
+
                               <option value="">Type of Procedure</option>
-                              <option value="X-Ray">X-Ray</option>
+                              {XRAY_PROCEDURE_ITEMS.map((x) => (
+                                <option key={x.code} value={x.label}>
+                                  {x.label} — {formatPhp(x.fee)}
+                                </option>
+                              ))}
                             </select>
                           </div>
 
@@ -1512,8 +1529,16 @@ export default function BookAppointment() {
         ) : null}
 
         {/* Placeholder style for placeholders */}
+
+
         <style>{`
           .syn-input::placeholder { color: rgba(255,255,255,.65); }
+
+          /* ✅ Fix dropdown option font color (Windows/Chrome) */
+          .syn-procedure-select option {
+            color: #0f172a;
+            background: #ffffff;
+          }
         `}</style>
       </main>
     </div>

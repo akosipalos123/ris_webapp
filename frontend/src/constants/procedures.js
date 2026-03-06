@@ -22,8 +22,38 @@ export function formatPhp(n) {
   return `Php ${num.toFixed(2)}`;
 }
 
+// Normalize procedure labels so "Chest - Adult ..." matches "Chest — Adult ..."
+function normalizeProcLabel(v) {
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    // normalize all common unicode dashes to "-"
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    // normalize spacing around "-"
+    .replace(/\s*-\s*/g, " - ")
+    // collapse whitespace
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Finds the billing item that matches a booked procedure label.
+ * Handles dash differences (- vs —/–), spacing and case variations.
+ */
 export function findXrayBillingByLabel(label) {
-  const v = String(label || "").trim();
-  if (!v) return null;
-  return XRAY_BILLING_ITEMS.find((x) => x.label === v) || null;
+  const key = normalizeProcLabel(label);
+  if (!key) return null;
+
+  // 1) exact match after normalization
+  let hit = XRAY_BILLING_ITEMS.find(
+    (x) => normalizeProcLabel(x.label) === key
+  );
+  if (hit) return hit;
+
+  // 2) fallback match for small variations
+  hit = XRAY_BILLING_ITEMS.find((x) => {
+    const xl = normalizeProcLabel(x.label);
+    return xl.includes(key) || key.includes(xl);
+  });
+
+  return hit || null;
 }

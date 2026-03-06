@@ -73,14 +73,12 @@ billSchema.index({ appointmentId: 1 }, { unique: true });
 // Helpful query index
 billSchema.index({ patientId: 1, issuedAt: -1 });
 
-// Keep totalAmount consistent with items[] (but DO NOT overwrite to 0 if items[] is empty)
-billSchema.pre("save", function (next) {
-  // currency fallback (prefer billing currency if provided)
+// ✅ FIXED pre-save (NO next())
+billSchema.pre("save", function () {
   if (!this.currency || String(this.currency).trim() === "") {
     this.currency = this.billing?.currency || "PHP";
   }
 
-  // If there are items, compute from items
   if (Array.isArray(this.items) && this.items.length > 0) {
     const sum = this.items.reduce((acc, it) => {
       const qty = Number(it.qty) || 1;
@@ -90,13 +88,10 @@ billSchema.pre("save", function (next) {
 
     this.totalAmount = Math.max(0, sum);
 
-    // keep procedure populated if blank
     if (!this.procedure && this.items[0]?.label) this.procedure = this.items[0].label;
-
-    return next();
+    return;
   }
 
-  // If no items, fall back to billing snapshot amount (if present)
   const billingAmt = Number(this.billing?.amount);
   if (Number.isFinite(billingAmt) && billingAmt > 0) {
     const current = Number(this.totalAmount);
@@ -109,12 +104,9 @@ billSchema.pre("save", function (next) {
     }
   }
 
-  // last guard
   if (!Number.isFinite(Number(this.totalAmount)) || Number(this.totalAmount) < 0) {
     this.totalAmount = 0;
   }
-
-  next();
 });
 
 module.exports = mongoose.model("Bill", billSchema);

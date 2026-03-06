@@ -1,6 +1,6 @@
 // frontend/src/pages/AdminDataRecords.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiUpload, apiPatch } from "../api";
+import { apiGet, apiUpload } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 /* ---------- ICONS (SVG) ---------- */
@@ -119,26 +119,15 @@ function getPatientNameValue(patientId) {
   return fullName(patientId);
 }
 
-function phpMoney(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, { style: "currency", currency: "PHP" });
+function getRoleClean(me) {
+  return String(me?.role || me?.userType || "").trim().toLowerCase();
 }
-
-function billStatusNorm(raw) {
-  const s = String(raw || "Pending").trim();
-  // unify to your Bill model enum: Pending/Unpaid/Paid/Voided
-  if (!s) return "Pending";
-  const lower = s.toLowerCase();
-  if (lower === "paid") return "Paid";
-  if (lower === "voided") return "Voided";
-  if (lower === "unpaid") return "Unpaid";
-  if (lower === "pending") return "Pending";
-  // legacy fallback
-  return s;
+function isAdminUser(me) {
+  const r = getRoleClean(me);
+  return me?.isAdmin === true || r === "admin" || r === "superadmin";
 }
-
-function isPaidStatus(s) {
-  return String(s || "").toLowerCase() === "paid";
+function getAuthTokenAny() {
+  return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
 }
 
 export default function AdminDataRecords() {
@@ -165,26 +154,43 @@ export default function AdminDataRecords() {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewItem, setViewItem] = useState(null);
 
-  // ✅ BILLING UI STATE (Admin modal)
-  const [billLoading, setBillLoading] = useState(false);
-  const [billSaving, setBillSaving] = useState(false);
-  const [billDoc, setBillDoc] = useState(null); // from GET /api/admin/appointments/:id/bill
-  const [billStatus, setBillStatus] = useState("Pending");
+  // ✅ Receipt meta (per appointment)
+  // { [appointmentId]: { billId: string|null, receiptUrl: string } }
+  const [billMeta, setBillMeta] = useState({});
+  const [metaLoading, setMetaLoading] = useState(false);
 
-  const [receiptFile, setReceiptFile] = useState(null);
-  const [receiptUploading, setReceiptUploading] = useState(false);
+  // ✅ uploading state per appointmentId
+  const [uploading, setUploading] = useState({});
 
   async function ensureAdmin() {
+    const adminToken = localStorage.getItem("adminToken");
     const token = localStorage.getItem("token");
+
+    if (!adminToken && !token) {
+      nav("/login");
+      return false;
+    }
+
+    if (adminToken) {
+      try {
+        const me = await apiGet("/api/admin/auth/me", adminToken);
+        setAdminProfile(me || null);
+        return true;
+      } catch {
+        localStorage.removeItem("adminToken");
+      }
+    }
+
     if (!token) {
       nav("/login");
       return false;
     }
+
     try {
       const me = await apiGet("/api/auth/me", token);
       setAdminProfile(me || null);
 
-      if (!me?.isAdmin) {
+      if (!isAdminUser(me)) {
         nav("/profile");
         return false;
       }
@@ -196,20 +202,53 @@ export default function AdminDataRecords() {
     }
   }
 
+  async function loadBillMetaFor(list) {
+    const authToken = getAuthTokenAny();
+    if (!authToken) return;
+
+    setMetaLoading(true);
+    const next = {};
+
+    await Promise.allSettled(
+      (list || []).map(async (a) => {
+        const apptId = a?._id;
+        if (!apptId) return;
+
+        try {
+          const b = await apiGet(`/api/admin/appointments/${apptId}/bill`, authToken);
+          next[apptId] = {
+            billId: b?._id || null,
+            receiptUrl: b?.receiptUrl || "",
+          };
+        } catch {
+          // bill might be missing for legacy records
+          next[apptId] = { billId: null, receiptUrl: "" };
+        }
+      })
+    );
+
+    setBillMeta(next);
+    setMetaLoading(false);
+  }
+
   async function loadRecords() {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
+    const authToken = getAuthTokenAny();
+    if (!authToken) return nav("/login");
 
     try {
       setLoading(true);
       setMsg("");
 
-      const data = await apiGet("/api/admin/appointments?status=Completed", token);
+      const data = await apiGet("/api/admin/appointments?status=Completed", authToken);
       const list = Array.isArray(data) ? data : [];
       setRows(list);
+
+      // Load receipt status for each row (bill receiptUrl)
+      await loadBillMetaFor(list);
     } catch (err) {
       setMsg(err.message || "Failed to load data records");
       setRows([]);
+      setBillMeta({});
     } finally {
       setLoading(false);
     }
@@ -259,6 +298,8 @@ export default function AdminDataRecords() {
   function logout() {
     setMenuOpen(false);
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
     nav("/login");
   }
 
@@ -305,138 +346,71 @@ export default function AdminDataRecords() {
     return sorted;
   }, [rows, search, sort]);
 
-  async function fetchBillForAppointment(apptId) {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
-
-    setBillLoading(true);
-    setBillDoc(null);
-    setReceiptFile(null);
-
-    try {
-      // This endpoint already exists in your backend/admin.js:
-      // GET /api/admin/appointments/:id/bill
-      const b = await apiGet(`/api/admin/appointments/${apptId}/bill`, token);
-      setBillDoc(b || null);
-
-      const initialStatus = billStatusNorm(b?.status || "Pending");
-      setBillStatus(initialStatus);
-    } catch (err) {
-      // If bill is missing, keep billDoc null and default status
-      console.warn("Failed to fetch bill:", err);
-      setBillDoc(null);
-      setBillStatus("Pending");
-    } finally {
-      setBillLoading(false);
-    }
-  }
-
   function openView(item) {
     setMsg("");
     setViewItem(item);
     setViewOpen(true);
-    // load billing data for this appointment
-    if (item?._id) fetchBillForAppointment(item._id);
   }
 
   function closeView() {
-    if (billSaving || receiptUploading) return;
     setViewOpen(false);
     setViewItem(null);
-    setBillDoc(null);
-    setBillStatus("Pending");
-    setReceiptFile(null);
   }
 
-  async function saveBillStatus(nextStatus) {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
-    if (!viewItem?._id) return;
+  async function uploadReceiptForAppointment(apptId, file) {
+    const authToken = getAuthTokenAny();
+    if (!authToken) return nav("/login");
+    if (!apptId || !file) return;
 
-    const normalized = billStatusNorm(nextStatus);
+    setMsg("");
+
+    // need billId for receipt upload endpoint
+    let billId = billMeta?.[apptId]?.billId || null;
+
+    // fallback: fetch bill if missing
+    if (!billId) {
+      try {
+        const b = await apiGet(`/api/admin/appointments/${apptId}/bill`, authToken);
+        billId = b?._id || null;
+        setBillMeta((prev) => ({
+          ...prev,
+          [apptId]: { billId, receiptUrl: b?.receiptUrl || "" },
+        }));
+      } catch {
+        billId = null;
+      }
+    }
+
+    if (!billId) {
+      setMsg("Billing record not found for this appointment.");
+      return;
+    }
 
     try {
-      setBillSaving(true);
-      setMsg("");
+      setUploading((p) => ({ ...p, [apptId]: true }));
 
-      // ✅ We reuse your existing endpoint:
-      // POST /api/admin/appointments/:id/bill
-      // It upserts the Bill and can set status and paidAt.
-      // We preserve items from existing billDoc (or build from appointment.billing snapshot).
-      const items =
-        Array.isArray(billDoc?.items) && billDoc.items.length
-          ? billDoc.items
-          : viewItem?.billing?.label
-          ? [{ code: viewItem.billing.code || "", label: viewItem.billing.label, amount: Number(viewItem.billing.amount) || 0, qty: 1 }]
-          : [];
+      const fd = new FormData();
+      fd.append("receipt", file);
 
-      const payload = {
-        items: items.map((it) => ({
-          // backend accepts label + amount; extra props are harmless, but we keep minimal
-          label: String(it?.label || "").trim(),
-          amount: Number(it?.amount || 0),
-        })),
-        // backend/admin.js currently allows: Unpaid/Paid/Voided
-        // your Bill model supports Pending too; but admin endpoint doesn’t.
-        // We'll map "Pending" -> "Unpaid" for that endpoint.
-        status: normalized === "Pending" ? "Unpaid" : normalized,
-      };
+      const updated = await apiUpload(`/api/admin/bills/${billId}/receipt`, authToken, fd);
 
-      const saved = await apiPatch(`/api/admin/appointments/${viewItem._id}/bill`, token, payload);
-      // NOTE: apiPatch will call PATCH; but your route is POST.
-      // If your apiPatch cannot hit POST routes, change this call to apiUpload or apiPost in your api helper.
-      // For now, we’ll fallback to apiUpload with JSON if apiPatch fails (see catch below).
-
-      setBillDoc(saved || null);
-      setBillStatus(billStatusNorm(saved?.status || normalized));
+      setBillMeta((prev) => ({
+        ...prev,
+        [apptId]: {
+          billId: updated?._id || billId,
+          receiptUrl: updated?.receiptUrl || "",
+        },
+      }));
     } catch (err) {
-      // Fallback if your API helper doesn't support POST-as-PATCH
-      try {
-        const token = localStorage.getItem("token");
-        const items =
-          Array.isArray(billDoc?.items) && billDoc.items.length
-            ? billDoc.items
-            : viewItem?.billing?.label
-            ? [{ code: viewItem.billing.code || "", label: viewItem.billing.label, amount: Number(viewItem.billing.amount) || 0, qty: 1 }]
-            : [];
-
-        const payload = {
-          items: items.map((it) => ({
-            label: String(it?.label || "").trim(),
-            amount: Number(it?.amount || 0),
-          })),
-          status: normalized === "Pending" ? "Unpaid" : normalized,
-        };
-
-        // apiUpload uses fetch POST under the hood in your project;
-        // if it requires FormData, ignore this fallback and add apiPost in ../api instead.
-        const saved = await apiUpload(`/api/admin/appointments/${viewItem._id}/bill`, token, payload);
-        setBillDoc(saved || null);
-        setBillStatus(billStatusNorm(saved?.status || normalized));
-      } catch (e2) {
-        setMsg(err.message || e2.message || "Failed to update bill status");
-      }
+      setMsg(err.message || "Upload receipt failed");
     } finally {
-      setBillSaving(false);
+      setUploading((p) => ({ ...p, [apptId]: false }));
     }
   }
 
-  async function uploadReceiptAndMarkPaid() {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
-    if (!viewItem?._id) return;
-    if (!receiptFile) return setMsg("Receipt file is required.");
-
-    // We don’t have a dedicated receipt endpoint yet in backend.
-    // Minimal approach (NOW): store receiptUrl on bill via /bill upsert by sending items + status + (optional) receiptUrl.
-    // Your current backend /appointments/:id/bill does NOT accept receiptUrl.
-    // So we’ll just mark Paid for now, and keep receipt upload UI ready; receipt backend can be added next.
-    //
-    // If you already have receipt upload implemented elsewhere, replace this function to call it.
-
-    setMsg(
-      "Receipt upload API is not implemented yet (backend). For now, you can set status to Paid; we'll wire receipt upload next."
-    );
+  function openReceipt(url) {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   /* ---------- STYLES (match screenshot) ---------- */
@@ -543,7 +517,7 @@ export default function AdminDataRecords() {
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
-    padding: "0 24px 16px", // ✅ no top white space
+    padding: "0 24px 16px",
     height: "100vh",
     overflow: "hidden",
     display: "flex",
@@ -553,7 +527,7 @@ export default function AdminDataRecords() {
 
   const topbar = {
     height: 84,
-    borderRadius: "0 0 22px 22px", // ✅ flush to top
+    borderRadius: "0 0 22px 22px",
     background: `linear-gradient(90deg, ${DARK}, #1c5a41)`,
     color: "#fff",
     padding: "16px 22px",
@@ -720,9 +694,10 @@ export default function AdminDataRecords() {
     cursor: "pointer",
   };
 
+  // ✅ now with Receipt column
   const tableHeader = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 1fr 0.6fr",
+    gridTemplateColumns: "1.2fr 1fr 0.55fr 0.75fr",
     gap: 14,
     padding: "10px 12px",
     fontWeight: 900,
@@ -736,7 +711,7 @@ export default function AdminDataRecords() {
 
   const row = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 1fr 0.6fr",
+    gridTemplateColumns: "1.2fr 1fr 0.55fr 0.75fr",
     gap: 14,
     padding: "12px 12px",
     alignItems: "center",
@@ -745,7 +720,7 @@ export default function AdminDataRecords() {
     color: "#0f172a",
   };
 
-  const viewBtn = (disabled) => ({
+  const actionBtn = (disabled) => ({
     width: "100%",
     padding: "10px 14px",
     borderRadius: 2,
@@ -755,6 +730,20 @@ export default function AdminDataRecords() {
     border: `2px solid ${DARK}`,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.55 : 1,
+    whiteSpace: "nowrap",
+  });
+
+  const receiptBtn = (disabled, isView) => ({
+    width: "100%",
+    padding: "10px 14px",
+    borderRadius: 2,
+    background: isView ? "#fff" : DARK,
+    color: isView ? DARK : "#fff",
+    fontWeight: 900,
+    border: `2px solid ${DARK}`,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+    whiteSpace: "nowrap",
   });
 
   // View Modal
@@ -845,74 +834,7 @@ export default function AdminDataRecords() {
     display: "block",
   };
 
-  // ✅ Billing mini-panel styles
-  const billPanel = {
-    marginTop: 14,
-    padding: 14,
-    borderRadius: 12,
-    border: `2px solid ${DARK}`,
-    background: "#fff",
-    display: "grid",
-    gap: 10,
-  };
-
-  const billRow = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" };
-
-  const billSelect = (disabled) => ({
-    padding: "10px 12px",
-    borderRadius: 2,
-    border: `2px solid ${DARK}`,
-    background: disabled ? "#e5e7eb" : "#fff",
-    color: "#0f172a",
-    fontWeight: 900,
-    outline: "none",
-    cursor: disabled ? "not-allowed" : "pointer",
-    minWidth: 220,
-  });
-
-  const actionBtn = (disabled) => ({
-    padding: "10px 14px",
-    borderRadius: 2,
-    border: `2px solid ${DARK}`,
-    background: disabled ? "#94a3b8" : DARK,
-    color: "#fff",
-    fontWeight: 900,
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.75 : 1,
-    whiteSpace: "nowrap",
-  });
-
-  const secondaryBtn = (disabled) => ({
-    padding: "10px 14px",
-    borderRadius: 2,
-    border: `2px solid ${DARK}`,
-    background: "#fff",
-    color: DARK,
-    fontWeight: 900,
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.75 : 1,
-    whiteSpace: "nowrap",
-  });
-
-  const badge = (s) => {
-    const st = billStatusNorm(s);
-    const lower = st.toLowerCase();
-    const c =
-      lower === "paid" ? "#0b6b2f" : lower === "voided" ? "#6b7280" : lower === "unpaid" || lower === "pending" ? "#b91c1c" : DARK;
-    return {
-      display: "inline-flex",
-      padding: "6px 12px",
-      borderRadius: 2,
-      border: `2px solid ${c}`,
-      color: c,
-      fontWeight: 900,
-      background: "#fff",
-      minWidth: 90,
-      justifyContent: "center",
-    };
-  };
-
-  // Admin sidebar items (adjust routes if needed)
+  // Admin sidebar items
   const SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon },
@@ -928,24 +850,6 @@ export default function AdminDataRecords() {
       </div>
     );
   }
-
-  const modalBusy = billSaving || receiptUploading;
-
-  const billingLabel =
-    billDoc?.billing?.label ||
-    billDoc?.procedure ||
-    viewItem?.billing?.label ||
-    viewItem?.procedure ||
-    "—";
-
-  const billingAmount =
-    (typeof billDoc?.totalAmount === "number" ? billDoc.totalAmount : undefined) ??
-    (typeof billDoc?.billing?.amount === "number" ? billDoc.billing.amount : undefined) ??
-    (typeof viewItem?.billing?.amount === "number" ? viewItem.billing.amount : undefined) ??
-    0;
-
-  const billId = billDoc?._id || null;
-  const receiptUrl = billDoc?.receiptUrl || "";
 
   return (
     <div style={shell}>
@@ -1104,6 +1008,7 @@ export default function AdminDataRecords() {
                 <div>Patient Name</div>
                 <div>Patient ID</div>
                 <div />
+                <div>Receipt</div>
               </div>
 
               <div style={tableBody}>
@@ -1116,14 +1021,64 @@ export default function AdminDataRecords() {
                     const name = getPatientNameValue(a.patientId || null);
                     const pid = getPatientIdValue(a.patientId || null);
 
+                    const apptId = a._id;
+                    const meta = billMeta?.[apptId]; // undefined = still loading this row
+                    const receiptUrl = meta?.receiptUrl || "";
+                    const isUploading = !!uploading?.[apptId];
+
+                    const metaReady = meta !== undefined || !metaLoading;
+                    const canUpload = metaReady && !receiptUrl;
+
+                    const inputId = `receipt_${apptId}`;
+
                     return (
                       <div key={a._id} style={row}>
                         <div>{name}</div>
                         <div>{pid}</div>
+
                         <div>
-                          <button type="button" style={viewBtn(false)} onClick={() => openView(a)}>
+                          <button type="button" style={actionBtn(false)} onClick={() => openView(a)}>
                             View
                           </button>
+                        </div>
+
+                        <div>
+                          {/* hidden input */}
+                          <input
+                            id={inputId}
+                            type="file"
+                            accept="application/pdf,image/png,image/jpeg,image/webp"
+                            style={{ display: "none" }}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] || null;
+                              // allow choosing same file again later
+                              e.target.value = "";
+                              if (!f) return;
+                              uploadReceiptForAppointment(apptId, f);
+                            }}
+                          />
+
+                          {receiptUrl ? (
+                            <button
+                              type="button"
+                              style={receiptBtn(false, true)}
+                              onClick={() => openReceipt(receiptUrl)}
+                            >
+                              View Receipt
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              style={receiptBtn(isUploading || !metaReady, false)}
+                              disabled={isUploading || !metaReady}
+                              onClick={() => {
+                                const el = document.getElementById(inputId);
+                                if (el) el.click();
+                              }}
+                            >
+                              {isUploading ? "Uploading..." : metaReady ? "Upload Receipt" : "Loading..."}
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -1178,11 +1133,7 @@ export default function AdminDataRecords() {
                         const url = typeof img === "string" ? img : img?.url || img?.secureUrl || img?.path || "";
                         return (
                           <div key={idx} style={imgCard}>
-                            {url ? (
-                              <img src={url} alt={`Diagnostic ${idx + 1}`} style={imgEl} />
-                            ) : (
-                              <div style={{ padding: 10 }}>No URL</div>
-                            )}
+                            {url ? <img src={url} alt={`Diagnostic ${idx + 1}`} style={imgEl} /> : <div style={{ padding: 10 }}>No URL</div>}
                           </div>
                         );
                       })}
@@ -1191,100 +1142,8 @@ export default function AdminDataRecords() {
                     <div style={value}>—</div>
                   )}
 
-                  {/* ✅ BILLING PANEL */}
-                  <div style={billPanel}>
-                    <div style={{ fontWeight: 900, color: DARK, fontSize: 18 }}>Billing</div>
-
-                    {billLoading ? (
-                      <div style={{ color: "#64748b", fontWeight: 900 }}>Loading bill...</div>
-                    ) : (
-                      <>
-                        <div style={billRow}>
-                          <span style={{ fontWeight: 900, color: "#0f172a" }}>Item</span>
-                          <span style={{ fontWeight: 900, color: "#0f172a", textAlign: "right" }}>{billingLabel}</span>
-                        </div>
-
-                        <div style={billRow}>
-                          <span style={{ fontWeight: 900, color: "#0f172a" }}>Amount</span>
-                          <span style={{ fontWeight: 900, color: "#0f172a" }}>{phpMoney(billingAmount)}</span>
-                        </div>
-
-                        <div style={billRow}>
-                          <span style={{ fontWeight: 900, color: "#0f172a" }}>Status</span>
-                          <span style={badge(billStatus)}>{billStatusNorm(billStatus)}</span>
-                        </div>
-
-                        <div style={billRow}>
-                          <select
-                            value={billStatusNorm(billStatus)}
-                            disabled={modalBusy}
-                            style={billSelect(modalBusy)}
-                            onChange={(e) => setBillStatus(billStatusNorm(e.target.value))}
-                          >
-                            <option value="Pending">Pending</option>
-                            <option value="Unpaid">Unpaid</option>
-                            <option value="Paid">Paid</option>
-                            <option value="Voided">Voided</option>
-                          </select>
-
-                          <button
-                            type="button"
-                            style={actionBtn(modalBusy)}
-                            disabled={modalBusy}
-                            onClick={() => saveBillStatus(billStatus)}
-                            title="Save bill status"
-                          >
-                            {billSaving ? "Saving..." : "Update Status"}
-                          </button>
-                        </div>
-
-                        {/* Receipt controls */}
-                        <div style={{ display: "grid", gap: 10 }}>
-                          {receiptUrl ? (
-                            <div style={billRow}>
-                              <a href={receiptUrl} target="_blank" rel="noreferrer" style={linkBtn}>
-                                View Receipt
-                              </a>
-                              <span style={{ fontWeight: 900, color: "#64748b" }}>{billId ? `Bill #${shortId(billId)}` : ""}</span>
-                            </div>
-                          ) : (
-                            <div style={{ display: "grid", gap: 8 }}>
-                              <div style={{ fontWeight: 900, color: "#0f172a" }}>Receipt (optional)</div>
-                              <input
-                                type="file"
-                                disabled={modalBusy}
-                                style={{ padding: "8px 10px", border: `2px solid ${DARK}`, borderRadius: 2, fontWeight: 800 }}
-                                onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
-                              />
-
-                              <div style={billRow}>
-                                <button
-                                  type="button"
-                                  style={secondaryBtn(modalBusy || !receiptFile)}
-                                  disabled={modalBusy || !receiptFile}
-                                  onClick={uploadReceiptAndMarkPaid}
-                                >
-                                  Upload Receipt
-                                </button>
-
-                                <div style={{ fontSize: 12, fontWeight: 900, color: "#64748b" }}>
-                                  (Receipt upload backend next)
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* tiny note about current backend limitations */}
-                        <div style={{ fontSize: 12, fontWeight: 900, color: "#64748b" }}>
-                          Note: Status update uses existing <code>/api/admin/appointments/:id/bill</code>. Receipt upload needs a backend endpoint.
-                        </div>
-                      </>
-                    )}
-                  </div>
-
                   <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
-                    <button type="button" style={closeBtn} onClick={closeView} disabled={modalBusy}>
+                    <button type="button" style={closeBtn} onClick={closeView}>
                       Close
                     </button>
                   </div>

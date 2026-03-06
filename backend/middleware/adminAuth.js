@@ -1,27 +1,47 @@
 // backend/middleware/adminAuth.js
 const jwt = require("jsonwebtoken");
+const Patient = require("../models/Patient");
 
-function requireAdminAuth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const [type, token] = header.split(" ");
+async function requireAdminAuth(req, res, next) {
+  const header = String(req.headers.authorization || "").trim();
+  const [type, token] = header.split(/\s+/);
 
   if (type !== "Bearer" || !token) {
-    return res.status(401).json({ message: "Missing or invalid Authorization header" });
+    return res.status(401).json({ message: "Missing token" });
   }
 
+  let payload;
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    payload = jwt.verify(token, process.env.JWT_SECRET);
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
 
-    // ✅ enforce admin token type so patient tokens can't access admin routes
-    if (payload.typ !== "admin") {
+  // Reject OTP-only tokens explicitly
+  if (payload?.typ === "admin_otp" || payload?.typ === "otp") {
+    return res.status(401).json({ message: "Invalid token type" });
+  }
+
+  const id = payload.sub || payload.id || payload.userId || payload._id;
+  if (!id) return res.status(401).json({ message: "Invalid token payload" });
+
+  try {
+    const p = await Patient.findById(id).select("role isArchived isActive").lean();
+    if (!p) return res.status(401).json({ message: "Not authenticated" });
+
+    const role = String(p.role || "").trim().toLowerCase();
+    if (!["admin", "superadmin"].includes(role)) {
       return res.status(401).json({ message: "Invalid token type" });
     }
 
-    req.adminId = payload.sub;
-    req.adminRole = payload.role;
+    if (p.isArchived) return res.status(403).json({ message: "Account archived" });
+    if (p.isActive === false) return res.status(403).json({ message: "Account disabled" });
+
+    req.adminId = String(id);
+    req.adminRole = role;
     next();
-  } catch {
-    return res.status(401).json({ message: "Invalid or expired token" });
+  } catch (err) {
+    return res.status(500).json({ message: "Auth check failed", error: err.message });
   }
 }
 

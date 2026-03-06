@@ -16,16 +16,26 @@ function buildErrorMessage(data, fallback) {
   return fallback;
 }
 
+function normalizeToken(token) {
+  // Prevent "Bearer Bearer <jwt>" / "Token <jwt>" / etc.
+  return String(token || "")
+    .trim()
+    .replace(/^(?:(?:Bearer|Token|JWT)\s+)+/i, "");
+}
+
 function getStoredTokenForPath(path) {
-  // In case this is ever executed where localStorage isn't available
   if (typeof window === "undefined" || !window.localStorage) return undefined;
 
-  // ✅ Admin endpoints use adminToken
+  // ✅ Admin endpoints: prefer adminToken, fallback to patient token
   if (String(path || "").startsWith("/api/admin")) {
-    return localStorage.getItem("adminToken") || undefined;
+    return (
+      localStorage.getItem("adminToken") ||
+      localStorage.getItem("token") ||
+      undefined
+    );
   }
 
-  // ✅ Everything else uses patient token
+  // ✅ Everything else uses patient token (unchanged)
   return localStorage.getItem("token") || undefined;
 }
 
@@ -34,7 +44,8 @@ function authHeader(path, tokenOverride) {
   const token =
     tokenOverride === undefined ? getStoredTokenForPath(path) : tokenOverride;
 
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const jwt = token ? normalizeToken(token) : "";
+  return jwt ? { Authorization: `Bearer ${jwt}` } : {};
 }
 
 export async function apiPost(path, body, token) {

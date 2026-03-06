@@ -2,7 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiUpload, apiPatch } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { XRAY_BILLING_ITEMS, formatPhp, findXrayBillingByLabel } from "../constants/procedures";
+import {
+  XRAY_BILLING_ITEMS,
+  formatPhp,
+  findXrayBillingByLabel,
+} from "../constants/procedures";
 
 const STATUSES = ["Pending", "Approved", "Rejected", "Cancelled", "Completed"];
 
@@ -90,6 +94,20 @@ function shortId(id) {
   return String(id).slice(-8).toUpperCase();
 }
 
+function getRoleClean(me) {
+  return String(me?.role || me?.userType || "").trim().toLowerCase();
+}
+
+function isAdminUser(me) {
+  const r = getRoleClean(me);
+  return me?.isAdmin === true || r === "admin" || r === "superadmin";
+}
+
+function getAuthTokenAny() {
+  // Prefer adminToken if present; fallback to patient token
+  return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
+}
+
 export default function AdminAppointments() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -125,7 +143,9 @@ export default function AdminAppointments() {
   const [completeBillingCode, setCompleteBillingCode] = useState("");
 
   const selectedBilling = useMemo(() => {
-    return XRAY_BILLING_ITEMS.find((x) => x.code === completeBillingCode) || null;
+    return (
+      XRAY_BILLING_ITEMS.find((x) => x.code === completeBillingCode) || null
+    );
   }, [completeBillingCode]);
 
   function onFilterChange(e) {
@@ -135,24 +155,48 @@ export default function AdminAppointments() {
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.status && filters.status !== "All") params.set("status", filters.status);
-    if (filters.procedure && filters.procedure !== "All") params.set("procedure", filters.procedure);
+    if (filters.status && filters.status !== "All")
+      params.set("status", filters.status);
+    if (filters.procedure && filters.procedure !== "All")
+      params.set("procedure", filters.procedure);
     if (filters.date) params.set("date", filters.date);
     const s = params.toString();
     return s ? `?${s}` : "";
   }, [filters]);
 
   async function ensureAdmin() {
+    const adminToken = localStorage.getItem("adminToken");
     const token = localStorage.getItem("token");
+
+    // If neither exists, go login
+    if (!adminToken && !token) {
+      nav("/login");
+      return false;
+    }
+
+    // Prefer adminToken validation if present
+    if (adminToken) {
+      try {
+        const me = await apiGet("/api/admin/auth/me", adminToken);
+        setAdminProfile(me || null);
+        return true;
+      } catch {
+        // adminToken invalid/expired -> remove and fall back to patient token role check
+        localStorage.removeItem("adminToken");
+      }
+    }
+
+    // Fallback: patient token role check
     if (!token) {
       nav("/login");
       return false;
     }
+
     try {
       const me = await apiGet("/api/auth/me", token);
       setAdminProfile(me || null);
 
-      if (!me?.isAdmin) {
+      if (!isAdminUser(me)) {
         nav("/profile");
         return false;
       }
@@ -165,13 +209,16 @@ export default function AdminAppointments() {
   }
 
   async function load() {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
+    const authToken = getAuthTokenAny();
+    if (!authToken) return nav("/login");
 
     try {
       setLoading(true);
       setMsg("");
-      const data = await apiGet(`/api/admin/appointments${queryString}`, token);
+      const data = await apiGet(
+        `/api/admin/appointments${queryString}`,
+        authToken
+      );
       setRows(Array.isArray(data) ? data : []);
     } catch (err) {
       setMsg(err.message || "Request failed");
@@ -220,12 +267,14 @@ export default function AdminAppointments() {
   function logout() {
     setMenuOpen(false);
     localStorage.removeItem("token");
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
     nav("/login");
   }
 
   async function setStatus(apptId, status) {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
+    const authToken = getAuthTokenAny();
+    if (!authToken) return nav("/login");
 
     if (status === "Cancelled") {
       const ok = window.confirm("Cancel this appointment?");
@@ -239,7 +288,9 @@ export default function AdminAppointments() {
     try {
       setSavingId(apptId);
       setMsg("");
-      await apiPatch(`/api/admin/appointments/${apptId}/status`, token, { status });
+      await apiPatch(`/api/admin/appointments/${apptId}/status`, authToken, {
+        status,
+      });
       await load();
     } catch (err) {
       setMsg(err.message || "Update failed");
@@ -272,11 +323,12 @@ export default function AdminAppointments() {
   }
 
   async function submitComplete() {
-    const token = localStorage.getItem("token");
-    if (!token) return nav("/login");
+    const authToken = getAuthTokenAny();
+    if (!authToken) return nav("/login");
     if (!completeAppt?._id) return;
 
-    if (!completeBillingCode) return setMsg("Billing item (procedure done) is required.");
+    if (!completeBillingCode)
+      return setMsg("Billing item (procedure done) is required.");
     if (!selectedBilling) return setMsg("Invalid billing selection.");
 
     if (!completeNotes.trim()) return setMsg("Notes are required.");
@@ -284,7 +336,8 @@ export default function AdminAppointments() {
     if (completePdf.type !== "application/pdf") return setMsg("File must be a PDF.");
 
     const maxBytes = 10 * 1024 * 1024;
-    if (completePdf.size > maxBytes) return setMsg("Result PDF is too large (max 10MB).");
+    if (completePdf.size > maxBytes)
+      return setMsg("Result PDF is too large (max 10MB).");
 
     try {
       setCompleteSaving(true);
@@ -300,7 +353,11 @@ export default function AdminAppointments() {
       fd.append("billingAmount", selectedBilling.fee.toFixed(2));
       fd.append("billingCurrency", "PHP");
 
-      await apiUpload(`/api/admin/appointments/${completeAppt._id}/complete`, token, fd);
+      await apiUpload(
+        `/api/admin/appointments/${completeAppt._id}/complete`,
+        authToken,
+        fd
+      );
 
       closeCompleteModal();
       await load();
@@ -850,8 +907,12 @@ export default function AdminAppointments() {
             ) : null}
 
             <div>
-              <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>Appointment Approval</div>
-              <div style={{ opacity: 0.95, fontSize: 14 }}>Manage and review booking history</div>
+              <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>
+                Appointment Approval
+              </div>
+              <div style={{ opacity: 0.95, fontSize: 14 }}>
+                Manage and review booking history
+              </div>
             </div>
           </div>
 
@@ -870,15 +931,23 @@ export default function AdminAppointments() {
               aria-expanded={menuOpen}
               title="Account menu"
             >
-              <img src={adminProfile?.avatarUrl || "/default-avatar.png"} alt="Avatar" style={avatar} />
+              <img
+                src={adminProfile?.avatarUrl || "/default-avatar.png"}
+                alt="Avatar"
+                style={avatar}
+              />
               <div style={chevronBox}>{menuOpen ? "▴" : "▾"}</div>
             </button>
 
             {menuOpen ? (
               <div style={dropdown} role="menu" aria-label="Account menu">
-                <div style={ddName}>{adminProfile?.name || adminProfile?.email || "Admin"}</div>
+                <div style={ddName}>
+                  {adminProfile?.name || adminProfile?.email || "Admin"}
+                </div>
                 <div style={ddSub}>Admin ID</div>
-                <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{adminIdShort}</div>
+                <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>
+                  {adminIdShort}
+                </div>
 
                 <div style={ddDivider} />
 
@@ -887,7 +956,11 @@ export default function AdminAppointments() {
                     ⎋ Sign Out
                   </button>
 
-                  <Link to="/profile" style={ddProfileBtn} onClick={() => setMenuOpen(false)}>
+                  <Link
+                    to="/profile"
+                    style={ddProfileBtn}
+                    onClick={() => setMenuOpen(false)}
+                  >
                     ↩ Profile
                   </Link>
                 </div>
@@ -904,7 +977,13 @@ export default function AdminAppointments() {
             <div style={filtersBar}>
               <div>
                 <div style={filterLabel}>Status</div>
-                <select name="status" value={filters.status} onChange={onFilterChange} style={filterControl} disabled={busy}>
+                <select
+                  name="status"
+                  value={filters.status}
+                  onChange={onFilterChange}
+                  style={filterControl}
+                  disabled={busy}
+                >
                   {statusOptions.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -915,7 +994,13 @@ export default function AdminAppointments() {
 
               <div>
                 <div style={filterLabel}>Procedure</div>
-                <select name="procedure" value={filters.procedure} onChange={onFilterChange} style={filterControl} disabled={busy}>
+                <select
+                  name="procedure"
+                  value={filters.procedure}
+                  onChange={onFilterChange}
+                  style={filterControl}
+                  disabled={busy}
+                >
                   {procedureOptions.map((p) => (
                     <option key={p} value={p}>
                       {p}
@@ -926,14 +1011,32 @@ export default function AdminAppointments() {
 
               <div>
                 <div style={filterLabel}>Date</div>
-                <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={filterControl} disabled={busy} />
+                <input
+                  type="date"
+                  name="date"
+                  value={filters.date}
+                  onChange={onFilterChange}
+                  style={filterControl}
+                  disabled={busy}
+                />
               </div>
 
               <div style={filterBtns}>
-                <button type="button" style={filterBtn(busy)} onClick={load} disabled={busy}>
+                <button
+                  type="button"
+                  style={filterBtn(busy)}
+                  onClick={load}
+                  disabled={busy}
+                >
                   Refresh
                 </button>
-                <button type="button" style={filterBtn(false)} onClick={() => setFilters({ status: "All", procedure: "All", date: "" })}>
+                <button
+                  type="button"
+                  style={filterBtn(false)}
+                  onClick={() =>
+                    setFilters({ status: "All", procedure: "All", date: "" })
+                  }
+                >
                   Reset Filters
                 </button>
               </div>
@@ -951,7 +1054,9 @@ export default function AdminAppointments() {
 
               <div style={tableBody}>
                 {loading ? (
-                  <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>Loading appointments...</div>
+                  <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>
+                    Loading appointments...
+                  </div>
                 ) : rows.length === 0 ? (
                   <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>
                     No appointments found for the selected filters.
@@ -1018,7 +1123,8 @@ export default function AdminAppointments() {
               <div style={modalHeader}>
                 <h2 style={modalTitle}>Complete Appointment</h2>
                 <div style={modalSub}>
-                  {completeAppt?.procedure || "-"} • {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
+                  {completeAppt?.procedure || "-"} •{" "}
+                  {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
                 </div>
               </div>
 
@@ -1048,7 +1154,12 @@ export default function AdminAppointments() {
 
                     <div>
                       <div style={cardLabel}>Fee</div>
-                      <input type="text" style={inputLight} readOnly value={selectedBilling ? formatPhp(selectedBilling.fee) : "—"} />
+                      <input
+                        type="text"
+                        style={inputLight}
+                        readOnly
+                        value={selectedBilling ? formatPhp(selectedBilling.fee) : "—"}
+                      />
                     </div>
 
                     <div>
@@ -1060,7 +1171,9 @@ export default function AdminAppointments() {
                         disabled={completeSaving}
                         onChange={(e) => setCompletePdf(e.target.files?.[0] || null)}
                       />
-                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>PDF only. Max 10MB.</div>
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
+                        PDF only. Max 10MB.
+                      </div>
                     </div>
 
                     <div>

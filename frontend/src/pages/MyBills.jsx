@@ -69,10 +69,6 @@ function getBillAmount(b) {
   return 0;
 }
 
-function getBillStatus(b) {
-  return b?.status || "Pending";
-}
-
 function getReceiptRaw(b) {
   return (
     b?.receiptUrl ||
@@ -84,6 +80,26 @@ function getReceiptRaw(b) {
     b?.invoicePath ||
     ""
   );
+}
+
+/**
+ * ✅ FIX: Legacy bills may still have status "Pending".
+ * We want patients to see:
+ * - Pending + no receipt  -> Unpaid
+ * - Pending + has receipt -> Paid
+ * - Unpaid + has receipt  -> Paid (safety for legacy)
+ */
+function getBillStatus(b) {
+  const raw = String(b?.status || "").trim();
+  const hasReceipt = Boolean(getReceiptRaw(b));
+  const lower = raw.toLowerCase();
+
+  if (!raw) return hasReceipt ? "Paid" : "Unpaid";
+
+  if (lower === "pending") return hasReceipt ? "Paid" : "Unpaid";
+  if (lower === "unpaid") return hasReceipt ? "Paid" : "Unpaid";
+
+  return raw;
 }
 
 // filename helpers
@@ -552,10 +568,11 @@ export default function MyBills() {
     const statusPillMobile = (statusRaw) => {
       const s = String(statusRaw || "").toLowerCase();
       const isPaid = s === "paid";
-      const isPending = s === "pending";
+      const isPending = s === "pending" || s === "unpaid"; // ✅ FIX
+      const isVoided = s === "voided";
 
-      const bg = isPaid ? "#dcfce7" : isPending ? "#fee2e2" : "#fffbeb";
-      const color = isPaid ? "#166534" : isPending ? "#991b1b" : "#92400e";
+      const bg = isPaid ? "#dcfce7" : isVoided ? "#e5e7eb" : isPending ? "#fee2e2" : "#fffbeb";
+      const color = isPaid ? "#166534" : isVoided ? "#374151" : isPending ? "#991b1b" : "#92400e";
 
       return {
         display: "inline-flex",
@@ -778,7 +795,6 @@ export default function MyBills() {
             </div>
           </header>
 
-          {/* ✅ content wrapped in .panel so borders/details remain on phone */}
           <div className="content">
             <div className="contentInner">
               {msg ? <div className="msgWarn">{msg}</div> : null}
@@ -835,7 +851,6 @@ export default function MyBills() {
           </div>
         </main>
 
-        {/* ✅ Mobile receipt modal (improved styling) */}
         {receiptOpen ? (
           <div style={mOverlay} onClick={closeReceipt} role="dialog" aria-modal="true" aria-label="Receipt dialog">
             <div style={mModal} onClick={(e) => e.stopPropagation()}>
@@ -868,7 +883,6 @@ export default function MyBills() {
               ) : null}
 
               <div style={mPreviewOuter}>
-                {/* print CSS will print ONLY this area */}
                 <div style={mPreviewInner} id="receipt-print-area">
                   {receiptUrl ? (
                     receiptIsPdf ? (
@@ -1187,8 +1201,9 @@ export default function MyBills() {
   const statusPill = (statusRaw) => {
     const s = String(statusRaw || "").toLowerCase();
     const isPaid = s === "paid";
-    const isPending = s === "pending";
-    const c = isPaid ? "#0b6b2f" : isPending ? "#b91c1c" : DARK;
+    const isPending = s === "pending" || s === "unpaid"; // ✅ FIX
+    const isVoided = s === "voided";
+    const c = isPaid ? "#0b6b2f" : isVoided ? "#6b7280" : isPending ? "#b91c1c" : DARK;
 
     return {
       display: "inline-flex",

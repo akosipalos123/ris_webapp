@@ -130,6 +130,13 @@ function getAuthTokenAny() {
   return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
 }
 
+function isPdfUrl(url) {
+  const raw = String(url || "");
+  const noQuery = raw.split("?")[0].toLowerCase();
+  const lower = raw.toLowerCase();
+  return noQuery.endsWith(".pdf") || noQuery.includes(".pdf") || lower.includes("format=pdf");
+}
+
 export default function AdminDataRecords() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -161,6 +168,26 @@ export default function AdminDataRecords() {
 
   // ✅ uploading state per appointmentId
   const [uploading, setUploading] = useState({});
+
+  // ✅ Receipt viewer modal
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptUrlView, setReceiptUrlView] = useState("");
+
+  function openReceiptModal(url) {
+    if (!url) return;
+    setReceiptUrlView(url);
+    setReceiptOpen(true);
+  }
+
+  function closeReceiptModal() {
+    setReceiptOpen(false);
+    setReceiptUrlView("");
+  }
+
+  function openReceiptInNewTab(url) {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
 
   async function ensureAdmin() {
     const adminToken = localStorage.getItem("adminToken");
@@ -295,6 +322,17 @@ export default function AdminDataRecords() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewOpen]);
 
+  // close receipt modal on ESC
+  useEffect(() => {
+    if (!receiptOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closeReceiptModal();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiptOpen]);
+
   function logout() {
     setMenuOpen(false);
     localStorage.removeItem("token");
@@ -406,11 +444,6 @@ export default function AdminDataRecords() {
     } finally {
       setUploading((p) => ({ ...p, [apptId]: false }));
     }
-  }
-
-  function openReceipt(url) {
-    if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   /* ---------- STYLES (match screenshot) ---------- */
@@ -1027,7 +1060,6 @@ export default function AdminDataRecords() {
                     const isUploading = !!uploading?.[apptId];
 
                     const metaReady = meta !== undefined || !metaLoading;
-                    const canUpload = metaReady && !receiptUrl;
 
                     const inputId = `receipt_${apptId}`;
 
@@ -1051,19 +1083,14 @@ export default function AdminDataRecords() {
                             style={{ display: "none" }}
                             onChange={(e) => {
                               const f = e.target.files?.[0] || null;
-                              // allow choosing same file again later
-                              e.target.value = "";
+                              e.target.value = ""; // allow choosing same file again later
                               if (!f) return;
                               uploadReceiptForAppointment(apptId, f);
                             }}
                           />
 
                           {receiptUrl ? (
-                            <button
-                              type="button"
-                              style={receiptBtn(false, true)}
-                              onClick={() => openReceipt(receiptUrl)}
-                            >
+                            <button type="button" style={receiptBtn(false, true)} onClick={() => openReceiptModal(receiptUrl)}>
                               View Receipt
                             </button>
                           ) : (
@@ -1133,7 +1160,11 @@ export default function AdminDataRecords() {
                         const url = typeof img === "string" ? img : img?.url || img?.secureUrl || img?.path || "";
                         return (
                           <div key={idx} style={imgCard}>
-                            {url ? <img src={url} alt={`Diagnostic ${idx + 1}`} style={imgEl} /> : <div style={{ padding: 10 }}>No URL</div>}
+                            {url ? (
+                              <img src={url} alt={`Diagnostic ${idx + 1}`} style={imgEl} />
+                            ) : (
+                              <div style={{ padding: 10 }}>No URL</div>
+                            )}
                           </div>
                         );
                       })}
@@ -1145,6 +1176,49 @@ export default function AdminDataRecords() {
                   <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
                     <button type="button" style={closeBtn} onClick={closeView}>
                       Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* RECEIPT MODAL (VIEW IN-APP) */}
+        {receiptOpen && receiptUrlView ? (
+          <div style={overlay} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
+            <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
+              <div style={modalHeader}>
+                <h2 style={modalTitle}>Receipt</h2>
+                <div style={modalSub}>Preview receipt (PDF/Image)</div>
+              </div>
+
+              <div style={modalInner}>
+                <div style={card}>
+                  {isPdfUrl(receiptUrlView) ? (
+                    <iframe
+                      src={receiptUrlView}
+                      title="Receipt PDF"
+                      style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
+                    />
+                  ) : (
+                    <div style={{ display: "grid", placeItems: "center" }}>
+                      <img
+                        src={receiptUrlView}
+                        alt="Receipt"
+                        style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
+                      />
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+                    <button type="button" style={closeBtn} onClick={closeReceiptModal}>
+                      Close
+                    </button>
+
+                    {/* optional fallback */}
+                    <button type="button" style={linkBtn} onClick={() => openReceiptInNewTab(receiptUrlView)}>
+                      Open in new tab
                     </button>
                   </div>
                 </div>

@@ -107,10 +107,20 @@ function shortId(id) {
   return String(id).slice(-8).toUpperCase();
 }
 
+// ✅ Prefer BSRT ID when patient object is populated
 function getPatientIdValue(patientId) {
   if (!patientId) return "—";
-  if (typeof patientId === "string") return shortId(patientId);
-  return shortId(patientId._id);
+
+  // populated object
+  if (typeof patientId === "object") {
+    if (patientId?.bsrtId) return String(patientId.bsrtId).trim();
+    if (patientId?.bsrtID) return String(patientId.bsrtID).trim(); // optional alt casing
+    if (patientId?._id) return shortId(patientId._id);
+    return "—";
+  }
+
+  // not populated (string ObjectId)
+  return shortId(patientId);
 }
 
 function getPatientNameValue(patientId) {
@@ -198,6 +208,7 @@ export default function AdminDataRecords() {
       return false;
     }
 
+    // Prefer adminToken if present
     if (adminToken) {
       try {
         const me = await apiGet("/api/admin/auth/me", adminToken);
@@ -208,6 +219,7 @@ export default function AdminDataRecords() {
       }
     }
 
+    // Fallback: patient token role check
     if (!token) {
       nav("/login");
       return false;
@@ -248,7 +260,6 @@ export default function AdminDataRecords() {
             receiptUrl: b?.receiptUrl || "",
           };
         } catch {
-          // bill might be missing for legacy records
           next[apptId] = { billId: null, receiptUrl: "" };
         }
       })
@@ -270,7 +281,6 @@ export default function AdminDataRecords() {
       const list = Array.isArray(data) ? data : [];
       setRows(list);
 
-      // Load receipt status for each row (bill receiptUrl)
       await loadBillMetaFor(list);
     } catch (err) {
       setMsg(err.message || "Failed to load data records");
@@ -343,14 +353,24 @@ export default function AdminDataRecords() {
 
   const adminFullName = useMemo(() => {
     if (!adminProfile) return "";
-    const base = [adminProfile.lastName, adminProfile.firstName, adminProfile.middleName].filter(Boolean).join(", ");
+    const base = [adminProfile.lastName, adminProfile.firstName, adminProfile.middleName]
+      .filter(Boolean)
+      .join(", ");
     return `${base}${adminProfile.suffix ? `, ${adminProfile.suffix}` : ""}`;
   }, [adminProfile]);
 
+  // ✅ prefer bsrtId, fallback
   const adminIdShort = useMemo(() => {
-    if (!adminProfile?._id) return "—";
-    return String(adminProfile._id).slice(-8).toUpperCase();
+    if (adminProfile?.bsrtId) return String(adminProfile.bsrtId).trim();
+    if (adminProfile?.bsrtID) return String(adminProfile.bsrtID).trim();
+    if (adminProfile?._id) return String(adminProfile._id).slice(-8).toUpperCase();
+    return "—";
   }, [adminProfile]);
+
+  // ✅ label like Profile.jsx
+  const roleClean = useMemo(() => getRoleClean(adminProfile), [adminProfile]);
+  const isSuperAdmin = roleClean === "superadmin";
+  const idLabelText = isSuperAdmin ? "Superadmin ID" : "Admin ID";
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -402,10 +422,8 @@ export default function AdminDataRecords() {
 
     setMsg("");
 
-    // need billId for receipt upload endpoint
     let billId = billMeta?.[apptId]?.billId || null;
 
-    // fallback: fetch bill if missing
     if (!billId) {
       try {
         const b = await apiGet(`/api/admin/appointments/${apptId}/bill`, authToken);
@@ -727,7 +745,6 @@ export default function AdminDataRecords() {
     cursor: "pointer",
   };
 
-  // ✅ now with Receipt column
   const tableHeader = {
     display: "grid",
     gridTemplateColumns: "1.2fr 1fr 0.55fr 0.75fr",
@@ -779,7 +796,6 @@ export default function AdminDataRecords() {
     whiteSpace: "nowrap",
   });
 
-  // View Modal
   const overlay = {
     position: "absolute",
     inset: 0,
@@ -867,7 +883,6 @@ export default function AdminDataRecords() {
     display: "block",
   };
 
-  // Admin sidebar items
   const SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon },
@@ -972,7 +987,7 @@ export default function AdminDataRecords() {
           {/* Admin dropdown */}
           <div style={rightTop} ref={menuRef}>
             <div style={idWrap}>
-              <div style={idLabel}>Admin ID</div>
+              <div style={idLabel}>{idLabelText}</div>
               <div style={idValue}>{adminIdShort}</div>
             </div>
 
@@ -991,7 +1006,7 @@ export default function AdminDataRecords() {
             {menuOpen ? (
               <div style={dropdown} role="menu" aria-label="Account menu">
                 <div style={ddName}>{adminFullName || "Admin"}</div>
-                <div style={ddSub}>Admin ID</div>
+                <div style={ddSub}>{idLabelText}</div>
                 <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{adminIdShort}</div>
 
                 <div style={ddDivider} />
@@ -1052,15 +1067,14 @@ export default function AdminDataRecords() {
                 ) : (
                   filtered.map((a) => {
                     const name = getPatientNameValue(a.patientId || null);
-                    const pid = getPatientIdValue(a.patientId || null);
+                    const pid = getPatientIdValue(a.patientId || null); // ✅ bsrtId preferred
 
                     const apptId = a._id;
-                    const meta = billMeta?.[apptId]; // undefined = still loading this row
+                    const meta = billMeta?.[apptId];
                     const receiptUrl = meta?.receiptUrl || "";
                     const isUploading = !!uploading?.[apptId];
 
                     const metaReady = meta !== undefined || !metaLoading;
-
                     const inputId = `receipt_${apptId}`;
 
                     return (
@@ -1075,7 +1089,6 @@ export default function AdminDataRecords() {
                         </div>
 
                         <div>
-                          {/* hidden input */}
                           <input
                             id={inputId}
                             type="file"
@@ -1083,7 +1096,7 @@ export default function AdminDataRecords() {
                             style={{ display: "none" }}
                             onChange={(e) => {
                               const f = e.target.files?.[0] || null;
-                              e.target.value = ""; // allow choosing same file again later
+                              e.target.value = "";
                               if (!f) return;
                               uploadReceiptForAppointment(apptId, f);
                             }}
@@ -1184,7 +1197,7 @@ export default function AdminDataRecords() {
           </div>
         ) : null}
 
-        {/* RECEIPT MODAL (VIEW IN-APP) */}
+        {/* RECEIPT MODAL */}
         {receiptOpen && receiptUrlView ? (
           <div style={overlay} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
             <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
@@ -1196,18 +1209,10 @@ export default function AdminDataRecords() {
               <div style={modalInner}>
                 <div style={card}>
                   {isPdfUrl(receiptUrlView) ? (
-                    <iframe
-                      src={receiptUrlView}
-                      title="Receipt PDF"
-                      style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
-                    />
+                    <iframe src={receiptUrlView} title="Receipt PDF" style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }} />
                   ) : (
                     <div style={{ display: "grid", placeItems: "center" }}>
-                      <img
-                        src={receiptUrlView}
-                        alt="Receipt"
-                        style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
-                      />
+                      <img src={receiptUrlView} alt="Receipt" style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }} />
                     </div>
                   )}
 
@@ -1216,7 +1221,6 @@ export default function AdminDataRecords() {
                       Close
                     </button>
 
-                    {/* optional fallback */}
                     <button type="button" style={linkBtn} onClick={() => openReceiptInNewTab(receiptUrlView)}>
                       Open in new tab
                     </button>

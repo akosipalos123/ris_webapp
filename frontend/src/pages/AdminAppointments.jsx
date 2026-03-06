@@ -82,7 +82,7 @@ function toDateObj(a) {
 }
 
 function safeName(p) {
-  if (!p) return "—";
+  if (!p || typeof p !== "object") return "—";
   const first = p.firstName || "";
   const last = p.lastName || "";
   const full = `${first} ${last}`.trim();
@@ -92,6 +92,19 @@ function safeName(p) {
 function shortId(id) {
   if (!id) return "—";
   return String(id).slice(-8).toUpperCase();
+}
+
+// ✅ Prefer BSRT ID if populated, else fallback to _id short
+function getPatientIdValue(patient) {
+  if (!patient) return "—";
+  if (typeof patient === "object") {
+    if (patient?.bsrtId) return String(patient.bsrtId).trim();
+    if (patient?.bsrtID) return String(patient.bsrtID).trim(); // optional alt casing
+    if (patient?._id) return shortId(patient._id);
+    return "—";
+  }
+  // patientId not populated (string ObjectId)
+  return shortId(patient);
 }
 
 function getRoleClean(me) {
@@ -108,6 +121,13 @@ function getAuthTokenAny() {
   return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
 }
 
+function isPdfUrl(url) {
+  const raw = String(url || "");
+  const noQuery = raw.split("?")[0].toLowerCase();
+  const lower = raw.toLowerCase();
+  return noQuery.endsWith(".pdf") || noQuery.includes(".pdf") || lower.includes("format=pdf");
+}
+
 export default function AdminAppointments() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -122,7 +142,7 @@ export default function AdminAppointments() {
   const [savingId, setSavingId] = useState(null);
 
   const [filters, setFilters] = useState({
-    status: "All",
+    status: "Pending",
     procedure: "All",
     date: "",
   });
@@ -142,10 +162,28 @@ export default function AdminAppointments() {
   // ✅ Billing state
   const [completeBillingCode, setCompleteBillingCode] = useState("");
 
+  // ✅ Request Slip viewer modal state
+  const [slipOpen, setSlipOpen] = useState(false);
+  const [slipUrlView, setSlipUrlView] = useState("");
+
+  function openSlipModal(url) {
+    if (!url) return;
+    setSlipUrlView(url);
+    setSlipOpen(true);
+  }
+
+  function closeSlipModal() {
+    setSlipOpen(false);
+    setSlipUrlView("");
+  }
+
+  function openSlipInNewTab(url) {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
   const selectedBilling = useMemo(() => {
-    return (
-      XRAY_BILLING_ITEMS.find((x) => x.code === completeBillingCode) || null
-    );
+    return XRAY_BILLING_ITEMS.find((x) => x.code === completeBillingCode) || null;
   }, [completeBillingCode]);
 
   function onFilterChange(e) {
@@ -155,10 +193,8 @@ export default function AdminAppointments() {
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.status && filters.status !== "All")
-      params.set("status", filters.status);
-    if (filters.procedure && filters.procedure !== "All")
-      params.set("procedure", filters.procedure);
+    if (filters.status && filters.status !== "All") params.set("status", filters.status);
+    if (filters.procedure && filters.procedure !== "All") params.set("procedure", filters.procedure);
     if (filters.date) params.set("date", filters.date);
     const s = params.toString();
     return s ? `?${s}` : "";
@@ -215,10 +251,7 @@ export default function AdminAppointments() {
     try {
       setLoading(true);
       setMsg("");
-      const data = await apiGet(
-        `/api/admin/appointments${queryString}`,
-        authToken
-      );
+      const data = await apiGet(`/api/admin/appointments${queryString}`, authToken);
       setRows(Array.isArray(data) ? data : []);
     } catch (err) {
       setMsg(err.message || "Request failed");
@@ -264,6 +297,16 @@ export default function AdminAppointments() {
     };
   }, [menuOpen]);
 
+  // close slip modal on ESC
+  useEffect(() => {
+    if (!slipOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closeSlipModal();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [slipOpen]);
+
   function logout() {
     setMenuOpen(false);
     localStorage.removeItem("token");
@@ -288,9 +331,7 @@ export default function AdminAppointments() {
     try {
       setSavingId(apptId);
       setMsg("");
-      await apiPatch(`/api/admin/appointments/${apptId}/status`, authToken, {
-        status,
-      });
+      await apiPatch(`/api/admin/appointments/${apptId}/status`, authToken, { status });
       await load();
     } catch (err) {
       setMsg(err.message || "Update failed");
@@ -327,8 +368,7 @@ export default function AdminAppointments() {
     if (!authToken) return nav("/login");
     if (!completeAppt?._id) return;
 
-    if (!completeBillingCode)
-      return setMsg("Billing item (procedure done) is required.");
+    if (!completeBillingCode) return setMsg("Billing item (procedure done) is required.");
     if (!selectedBilling) return setMsg("Invalid billing selection.");
 
     if (!completeNotes.trim()) return setMsg("Notes are required.");
@@ -336,8 +376,7 @@ export default function AdminAppointments() {
     if (completePdf.type !== "application/pdf") return setMsg("File must be a PDF.");
 
     const maxBytes = 10 * 1024 * 1024;
-    if (completePdf.size > maxBytes)
-      return setMsg("Result PDF is too large (max 10MB).");
+    if (completePdf.size > maxBytes) return setMsg("Result PDF is too large (max 10MB).");
 
     try {
       setCompleteSaving(true);
@@ -353,11 +392,7 @@ export default function AdminAppointments() {
       fd.append("billingAmount", selectedBilling.fee.toFixed(2));
       fd.append("billingCurrency", "PHP");
 
-      await apiUpload(
-        `/api/admin/appointments/${completeAppt._id}/complete`,
-        authToken,
-        fd
-      );
+      await apiUpload(`/api/admin/appointments/${completeAppt._id}/complete`, authToken, fd);
 
       closeCompleteModal();
       await load();
@@ -368,7 +403,18 @@ export default function AdminAppointments() {
     }
   }
 
-  const adminIdShort = useMemo(() => shortId(adminProfile?._id), [adminProfile]);
+  // ✅ Admin ID value: prefer bsrtId, fallback to Mongo _id short
+  const adminIdShort = useMemo(() => {
+    if (adminProfile?.bsrtId) return String(adminProfile.bsrtId).trim();
+    if (adminProfile?.bsrtID) return String(adminProfile.bsrtID).trim();
+    return shortId(adminProfile?._id);
+  }, [adminProfile]);
+
+  /* ---------- ROLE LABEL (match Profile.jsx behavior) ---------- */
+  const roleClean = useMemo(() => getRoleClean(adminProfile), [adminProfile]);
+  const isSuperAdmin = roleClean === "superadmin";
+  const isAdmin = roleClean === "admin" || isSuperAdmin || adminProfile?.isAdmin === true;
+  const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
 
   const statusOptions = useMemo(() => ["All", ...STATUSES], []);
 
@@ -654,9 +700,10 @@ export default function AdminAppointments() {
 
   const tablePanel = { ...panel, minHeight: 620, display: "flex", flexDirection: "column", marginTop: 14 };
 
+  // ✅ Added Request Slip column (6 columns total)
   const tableHeader = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 0.9fr 0.9fr 0.9fr 0.8fr",
+    gridTemplateColumns: "1.2fr 0.9fr 0.9fr 0.9fr 0.75fr 0.8fr",
     gap: 14,
     padding: "12px 12px",
     fontWeight: 900,
@@ -670,7 +717,7 @@ export default function AdminAppointments() {
 
   const rowStyle = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 0.9fr 0.9fr 0.9fr 0.8fr",
+    gridTemplateColumns: "1.2fr 0.9fr 0.9fr 0.9fr 0.75fr 0.8fr",
     gap: 14,
     padding: "14px 12px",
     alignItems: "center",
@@ -678,6 +725,19 @@ export default function AdminAppointments() {
     fontWeight: 800,
     color: "#0f172a",
   };
+
+  const slipBtn = (disabled) => ({
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 2,
+    background: "#fff",
+    color: DARK,
+    border: `2px solid ${DARK}`,
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.65 : 1,
+    whiteSpace: "nowrap",
+  });
 
   const statusSelectStyle = (status, disabled) => {
     let bg = "#fff";
@@ -721,7 +781,7 @@ export default function AdminAppointments() {
     };
   };
 
-  // Modal styles (Complete)
+  // Modal styles (Complete + Slip Viewer reuse)
   const overlay = {
     position: "absolute",
     inset: 0,
@@ -790,9 +850,9 @@ export default function AdminAppointments() {
   const btnOutline = (disabled) => ({
     padding: "12px 16px",
     borderRadius: 999,
-    background: "transparent",
-    color: "#fff",
-    border: "2px solid rgba(255,255,255,.8)",
+    background: "#fff",
+    color: DARK,
+    border: `2px solid ${DARK}`,
     fontWeight: 900,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.65 : 1,
@@ -803,9 +863,9 @@ export default function AdminAppointments() {
   const SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: CalendarIcon }, // admin can book here
+    { label: "Appointment Booking", to: "/appointments", IconComp: CalendarIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true }, // shared EditProfile page
+    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
   const isItemActive = (to, exact) => {
@@ -907,19 +967,15 @@ export default function AdminAppointments() {
             ) : null}
 
             <div>
-              <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>
-                Appointment Approval
-              </div>
-              <div style={{ opacity: 0.95, fontSize: 14 }}>
-                Manage and review booking history
-              </div>
+              <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>Appointment Approval</div>
+              <div style={{ opacity: 0.95, fontSize: 14 }}>Manage and review booking history</div>
             </div>
           </div>
 
           {/* Admin dropdown */}
           <div style={rightTop} ref={menuRef}>
             <div style={adminIdWrap}>
-              <div style={adminIdLabel}>Admin ID</div>
+              <div style={adminIdLabel}>{idLabelText}</div>
               <div style={adminIdValue}>{adminIdShort}</div>
             </div>
 
@@ -931,23 +987,15 @@ export default function AdminAppointments() {
               aria-expanded={menuOpen}
               title="Account menu"
             >
-              <img
-                src={adminProfile?.avatarUrl || "/default-avatar.png"}
-                alt="Avatar"
-                style={avatar}
-              />
+              <img src={adminProfile?.avatarUrl || "/default-avatar.png"} alt="Avatar" style={avatar} />
               <div style={chevronBox}>{menuOpen ? "▴" : "▾"}</div>
             </button>
 
             {menuOpen ? (
               <div style={dropdown} role="menu" aria-label="Account menu">
-                <div style={ddName}>
-                  {adminProfile?.name || adminProfile?.email || "Admin"}
-                </div>
-                <div style={ddSub}>Admin ID</div>
-                <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>
-                  {adminIdShort}
-                </div>
+                <div style={ddName}>{adminProfile?.name || adminProfile?.email || "Admin"}</div>
+                <div style={ddSub}>{idLabelText}</div>
+                <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{adminIdShort}</div>
 
                 <div style={ddDivider} />
 
@@ -956,11 +1004,7 @@ export default function AdminAppointments() {
                     ⎋ Sign Out
                   </button>
 
-                  <Link
-                    to="/profile"
-                    style={ddProfileBtn}
-                    onClick={() => setMenuOpen(false)}
-                  >
+                  <Link to="/profile" style={ddProfileBtn} onClick={() => setMenuOpen(false)}>
                     ↩ Profile
                   </Link>
                 </div>
@@ -977,13 +1021,7 @@ export default function AdminAppointments() {
             <div style={filtersBar}>
               <div>
                 <div style={filterLabel}>Status</div>
-                <select
-                  name="status"
-                  value={filters.status}
-                  onChange={onFilterChange}
-                  style={filterControl}
-                  disabled={busy}
-                >
+                <select name="status" value={filters.status} onChange={onFilterChange} style={filterControl} disabled={busy}>
                   {statusOptions.map((s) => (
                     <option key={s} value={s}>
                       {s}
@@ -1011,32 +1049,14 @@ export default function AdminAppointments() {
 
               <div>
                 <div style={filterLabel}>Date</div>
-                <input
-                  type="date"
-                  name="date"
-                  value={filters.date}
-                  onChange={onFilterChange}
-                  style={filterControl}
-                  disabled={busy}
-                />
+                <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={filterControl} disabled={busy} />
               </div>
 
               <div style={filterBtns}>
-                <button
-                  type="button"
-                  style={filterBtn(busy)}
-                  onClick={load}
-                  disabled={busy}
-                >
+                <button type="button" style={filterBtn(busy)} onClick={load} disabled={busy}>
                   Refresh
                 </button>
-                <button
-                  type="button"
-                  style={filterBtn(false)}
-                  onClick={() =>
-                    setFilters({ status: "All", procedure: "All", date: "" })
-                  }
-                >
+                <button type="button" style={filterBtn(false)} onClick={() => setFilters({ status: "Pending", procedure: "All", date: "" })}>
                   Reset Filters
                 </button>
               </div>
@@ -1049,26 +1069,28 @@ export default function AdminAppointments() {
                 <div>Patient ID</div>
                 <div>Procedure</div>
                 <div>Date</div>
+                <div>Request Slip</div>
                 <div>Actions</div>
               </div>
 
               <div style={tableBody}>
                 {loading ? (
-                  <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>
-                    Loading appointments...
-                  </div>
+                  <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>Loading appointments...</div>
                 ) : rows.length === 0 ? (
                   <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>
                     No appointments found for the selected filters.
                   </div>
                 ) : (
                   rows.map((a) => {
-                    const patient = a.patientId || {};
+                    const patient = a.patientId || null;
                     const patientName = safeName(patient);
-                    const patientId = shortId(patient._id);
+                    const patientId = getPatientIdValue(patient);
 
                     const dt = toDateObj(a);
                     const dateText = dt ? dt.toLocaleDateString() : "-";
+
+                    const referralUrl = String(a?.referralUrl || "").trim();
+                    const hasSlip = !!referralUrl;
 
                     const isRowBusy = savingId === a._id || completeSaving;
 
@@ -1078,6 +1100,17 @@ export default function AdminAppointments() {
                         <div>{patientId}</div>
                         <div>{a.procedure || "—"}</div>
                         <div>{dateText}</div>
+
+                        {/* ✅ Request Slip cell */}
+                        <div>
+                          {hasSlip ? (
+                            <button type="button" style={slipBtn(false)} onClick={() => openSlipModal(referralUrl)}>
+                              View Slip
+                            </button>
+                          ) : (
+                            "—"
+                          )}
+                        </div>
 
                         <div>
                           <select
@@ -1116,6 +1149,48 @@ export default function AdminAppointments() {
           </div>
         </div>
 
+        {/* ✅ REQUEST SLIP MODAL */}
+        {slipOpen && slipUrlView ? (
+          <div style={overlay} onClick={closeSlipModal} role="dialog" aria-modal="true" aria-label="View request slip">
+            <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
+              <div style={modalHeader}>
+                <h2 style={modalTitle}>Request Slip</h2>
+                <div style={modalSub}>Preview request slip (PDF/Image)</div>
+              </div>
+
+              <div style={modalInner}>
+                <div style={card}>
+                  {isPdfUrl(slipUrlView) ? (
+                    <iframe
+                      src={slipUrlView}
+                      title="Request Slip PDF"
+                      style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
+                    />
+                  ) : (
+                    <div style={{ display: "grid", placeItems: "center" }}>
+                      <img
+                        src={slipUrlView}
+                        alt="Request Slip"
+                        style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
+                      />
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+                    <button type="button" style={btnOutline(false)} onClick={closeSlipModal}>
+                      Close
+                    </button>
+
+                    <button type="button" style={btnDark(false)} onClick={() => openSlipInNewTab(slipUrlView)}>
+                      Open in new tab
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {/* ===== COMPLETE MODAL ===== */}
         {showCompleteModal ? (
           <div style={overlay} onClick={closeCompleteModal} role="dialog" aria-modal="true" aria-label="Complete appointment">
@@ -1123,8 +1198,7 @@ export default function AdminAppointments() {
               <div style={modalHeader}>
                 <h2 style={modalTitle}>Complete Appointment</h2>
                 <div style={modalSub}>
-                  {completeAppt?.procedure || "-"} •{" "}
-                  {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
+                  {completeAppt?.procedure || "-"} • {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
                 </div>
               </div>
 
@@ -1154,12 +1228,7 @@ export default function AdminAppointments() {
 
                     <div>
                       <div style={cardLabel}>Fee</div>
-                      <input
-                        type="text"
-                        style={inputLight}
-                        readOnly
-                        value={selectedBilling ? formatPhp(selectedBilling.fee) : "—"}
-                      />
+                      <input type="text" style={inputLight} readOnly value={selectedBilling ? formatPhp(selectedBilling.fee) : "—"} />
                     </div>
 
                     <div>

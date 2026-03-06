@@ -46,7 +46,8 @@ router.get("/appointments", ...requireAnyAdmin, async (req, res) => {
     }
 
     const appts = await Appointment.find(query)
-      .populate("patientId", "firstName lastName email")
+      // ✅ include bsrtId so frontend can display it instead of _id
+      .populate("patientId", "firstName lastName email bsrtId")
       .sort({ year: 1, month: 1, day: 1, createdAt: -1 })
       .lean();
 
@@ -98,7 +99,8 @@ router.patch("/appointments/:id/status", ...requireAnyAdmin, async (req, res) =>
       req.params.id,
       { $set: { status } },
       { new: true }
-    ).populate("patientId", "firstName lastName email");
+      // ✅ include bsrtId so frontend can display it instead of _id
+    ).populate("patientId", "firstName lastName email bsrtId");
 
     return res.json(appt);
   } catch (err) {
@@ -209,9 +211,10 @@ router.post(
         { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
       );
 
+      // ✅ include bsrtId so frontend can display it instead of _id
       const populated = await Appointment.findById(appt._id).populate(
         "patientId",
-        "firstName lastName email"
+        "firstName lastName email bsrtId"
       );
       return res.json(populated);
     } catch (err) {
@@ -446,9 +449,10 @@ router.post(
 
       await appt.save();
 
+      // ✅ include bsrtId so frontend can display it instead of _id
       const populated = await Appointment.findById(appt._id).populate(
         "patientId",
-        "firstName lastName email"
+        "firstName lastName email bsrtId"
       );
       return res.json(populated);
     } catch (err) {
@@ -475,7 +479,8 @@ router.patch("/appointments/:id/report", ...requireAnyAdmin, async (req, res) =>
       appointmentId,
       { $set: payload },
       { new: true }
-    ).populate("patientId", "firstName lastName email");
+      // ✅ include bsrtId so frontend can display it instead of _id
+    ).populate("patientId", "firstName lastName email bsrtId");
 
     if (!appt) return res.status(404).json({ message: "Appointment not found" });
 

@@ -318,14 +318,7 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
         </button>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 4,
-          marginTop: 8,
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 8 }}>
         {week.map((w) => (
           <div
             key={w}
@@ -346,14 +339,7 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
         ))}
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 4,
-          marginTop: 4,
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 4 }}>
         {days.map(({ d, iso, inMonth, disabled, selected: isSelected }) => {
           const canClick = !disabled;
           return (
@@ -435,6 +421,14 @@ export default function BookAppointment() {
   // request slip file (optional)
   const [slipFile, setSlipFile] = useState(null);
   const slipInputRef = useRef(null);
+
+  // ✅ If user uploaded a slip and didn't select a procedure, use a safe fallback.
+  // Change "X-Ray" if you prefer another placeholder value.
+  const procedureForBooking = useMemo(() => {
+    const p = String(form.procedure || "").trim();
+    if (p) return p;
+    return slipFile ? "X-Ray" : "";
+  }, [form.procedure, slipFile]);
 
   // ✅ local-safe today ISO (avoid off-by-one in some timezones)
   const todayIso = toLocalISODate(new Date());
@@ -564,12 +558,12 @@ export default function BookAppointment() {
     const token = localStorage.getItem("token");
     if (!token || !bookOpen) return;
 
-    if (!form.procedure || !form.date) {
+    if (!procedureForBooking || !form.date) {
       setAvailability(null);
       return;
     }
 
-    const q = `?procedure=${encodeURIComponent(form.procedure)}&date=${encodeURIComponent(
+    const q = `?procedure=${encodeURIComponent(procedureForBooking)}&date=${encodeURIComponent(
       form.date
     )}`;
     setCheckingAvail(true);
@@ -578,17 +572,22 @@ export default function BookAppointment() {
       .then((data) => setAvailability(data))
       .catch(() => setAvailability(null))
       .finally(() => setCheckingAvail(false));
-  }, [bookOpen, form.procedure, form.date]);
+  }, [bookOpen, procedureForBooking, form.date]);
 
   const activeStatuses = useMemo(() => new Set(["Pending", "Approved"]), []);
+
   const hasActiveSameProcedure =
-    !!form.procedure &&
-    appointments.some((a) => a.procedure === form.procedure && activeStatuses.has(a.status));
+    !!procedureForBooking &&
+    appointments.some(
+      (a) =>
+        String(a?.procedure || "").trim() === procedureForBooking &&
+        activeStatuses.has(a.status)
+    );
 
   const noSlots =
     availability && typeof availability.remaining === "number" && availability.remaining <= 0;
-  const submitDisabled =
-    saving || uploadingSlip || checkingAvail || noSlots || hasActiveSameProcedure;
+
+  const submitDisabled = saving || uploadingSlip || checkingAvail || noSlots || hasActiveSameProcedure;
 
   async function uploadRequestSlip(token, appointmentId, file) {
     const fd = new FormData();
@@ -615,12 +614,12 @@ export default function BookAppointment() {
       setSaving(true);
       setMsg("");
 
-      if (!form.procedure) return setMsg("Please select a procedure.");
+      if (!procedureForBooking) return setMsg("Please select a procedure or upload a request slip.");
       if (!form.date) return setMsg("Please select a date.");
 
       if (hasActiveSameProcedure) {
         return setMsg(
-          `You already have an active ${form.procedure} appointment (Pending/Approved). Please cancel/complete it before booking again.`
+          `You already have an active ${procedureForBooking} appointment (Pending/Approved). Please cancel/complete it before booking again.`
         );
       }
 
@@ -638,7 +637,7 @@ export default function BookAppointment() {
       }
 
       const [y, m, d] = form.date.split("-").map(Number);
-      const payload = { procedure: form.procedure, year: y, month: m, day: d };
+      const payload = { procedure: procedureForBooking, year: y, month: m, day: d };
 
       const created = await apiPost("/api/appointments", payload, token);
 
@@ -681,9 +680,7 @@ export default function BookAppointment() {
 
   const fullName = useMemo(() => {
     if (!profile) return "";
-    const base = [profile.lastName, profile.firstName, profile.middleName]
-      .filter(Boolean)
-      .join(", ");
+    const base = [profile.lastName, profile.firstName, profile.middleName].filter(Boolean).join(", ");
     return `${base}${profile.suffix ? `, ${profile.suffix}` : ""}`;
   }, [profile]);
 
@@ -722,9 +719,14 @@ export default function BookAppointment() {
     return s === "Completed";
   };
 
-  /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
-  const isAdmin =
-    profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
+  /* ---------- ROLE + LABEL (match Profile.jsx behavior) ---------- */
+  const roleClean = useMemo(
+    () => String(profile?.role || profile?.userType || "").trim().toLowerCase(),
+    [profile]
+  );
+  const isAdmin = roleClean === "admin" || roleClean === "superadmin" || profile?.isAdmin === true;
+  const isSuperAdmin = roleClean === "superadmin";
+  const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
 
   /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
@@ -740,7 +742,7 @@ export default function BookAppointment() {
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
     { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
+    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
 
   const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
@@ -778,7 +780,7 @@ export default function BookAppointment() {
       fontWeight: 900,
       cursor: disabled ? "not-allowed" : "pointer",
       opacity: disabled ? 0.65 : 1,
-      border: variant === "outline" ? `2px solid ${DARK}` : `2px solid ${DARK}`,
+      border: `2px solid ${DARK}`,
       background: variant === "solid" ? DARK : "#fff",
       color: variant === "solid" ? "#fff" : DARK,
       flex: 1,
@@ -966,8 +968,7 @@ export default function BookAppointment() {
     });
 
     const hintLine = (tone) => ({
-      color:
-        tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
+      color: tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
       fontWeight: 900,
       fontSize: 13,
       marginTop: 8,
@@ -1058,7 +1059,7 @@ export default function BookAppointment() {
 
               <div className="rightTop" ref={menuRef}>
                 <div className="patientIdWrap">
-                  <div className="patientIdLabel">Patient ID</div>
+                  <div className="patientIdLabel">{idLabelText}</div>
                   <div className="patientIdValue">{patientIdShort}</div>
                 </div>
 
@@ -1077,7 +1078,7 @@ export default function BookAppointment() {
                 {menuOpen ? (
                   <div className="dropdown" role="menu" aria-label="Account menu">
                     <div className="ddName">{fullName || "Patient Name"}</div>
-                    <div className="ddSub">Patient ID</div>
+                    <div className="ddSub">{idLabelText}</div>
                     <div className="ddId">{patientIdShort}</div>
 
                     <div className="ddDivider" />
@@ -1208,7 +1209,7 @@ export default function BookAppointment() {
                 <div style={modalInner}>
                   <form onSubmit={onSubmitBook}>
                     <div style={modalGrid}>
-                      {/* BASIC INFO (still just display/prefill; not submitted to backend) */}
+                      {/* BASIC INFO (display-only) */}
                       <div>
                         <div style={field}>
                           <div style={fieldLabel}>First Name</div>
@@ -1265,7 +1266,13 @@ export default function BookAppointment() {
                         <div style={fieldLabel}>Procedure</div>
 
                         <div style={procWrap}>
-                          <select name="procedure" value={form.procedure} onChange={onBookChange} style={select} required>
+                          <select
+                            name="procedure"
+                            value={form.procedure}
+                            onChange={onBookChange}
+                            style={select}
+                            required={!slipFile}
+                          >
                             <option value="">Type of Procedure</option>
                             {XRAY_PROCEDURE_ITEMS.map((x) => (
                               <option key={x.code} value={x.label}>
@@ -1337,7 +1344,7 @@ export default function BookAppointment() {
                           </div>
                         </div>
 
-                        {!form.procedure || !form.date ? (
+                        {!procedureForBooking || !form.date ? (
                           <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
                         ) : checkingAvail ? (
                           <div style={hintLine("muted")}>Checking availability...</div>
@@ -1813,10 +1820,7 @@ export default function BookAppointment() {
 
   const select = { ...input, appearance: "none" };
 
-  const rightCard = {
-    borderRadius: 2,
-    background: "rgba(255,255,255,.0)",
-  };
+  const rightCard = { borderRadius: 2, background: "rgba(255,255,255,.0)" };
 
   const calendarBox = {
     width: "100%",
@@ -1865,8 +1869,7 @@ export default function BookAppointment() {
   });
 
   const hintLine = (tone) => ({
-    color:
-      tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
+    color: tone === "bad" ? "#fecaca" : tone === "good" ? "#bbf7d0" : "rgba(255,255,255,.85)",
     fontWeight: 900,
     fontSize: 13,
     marginTop: 6,
@@ -1963,10 +1966,10 @@ export default function BookAppointment() {
             </div>
           </div>
 
-          {/* Patient dropdown */}
+          {/* Dropdown */}
           <div style={rightTop} ref={menuRef}>
             <div style={patientIdWrap}>
-              <div style={patientIdLabel}>Patient ID</div>
+              <div style={patientIdLabel}>{idLabelText}</div>
               <div style={patientIdValue}>{patientIdShort}</div>
             </div>
 
@@ -1984,8 +1987,8 @@ export default function BookAppointment() {
 
             {menuOpen ? (
               <div style={dropdown} role="menu" aria-label="Account menu">
-                <div style={ddName}>{fullName || "Patient Name"}</div>
-                <div style={ddSub}>Patient ID</div>
+                <div style={ddName}>{fullName || "Account"}</div>
+                <div style={ddSub}>{idLabelText}</div>
                 <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{patientIdShort}</div>
 
                 <div style={ddDivider} />
@@ -2192,7 +2195,7 @@ export default function BookAppointment() {
                               value={form.procedure}
                               onChange={onBookChange}
                               style={select}
-                              required
+                              required={!slipFile}
                             >
                               <option value="">Type of Procedure</option>
                               {XRAY_PROCEDURE_ITEMS.map((x) => (
@@ -2267,7 +2270,7 @@ export default function BookAppointment() {
                         </div>
                       </div>
 
-                      {!form.procedure || !form.date ? (
+                      {!procedureForBooking || !form.date ? (
                         <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
                       ) : checkingAvail ? (
                         <div style={hintLine("muted")}>Checking availability...</div>

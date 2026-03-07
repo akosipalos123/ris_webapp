@@ -115,8 +115,7 @@ function resolveProcedure(input) {
 
   // If known, use canonical label + configured limit; else fallback limit
   const label = matched?.label ?? std;
-  const limit =
-    Number.isFinite(matched?.limit) ? matched.limit : DEFAULT_DAILY_LIMIT;
+  const limit = Number.isFinite(matched?.limit) ? matched.limit : DEFAULT_DAILY_LIMIT;
 
   return { ok: true, label, limit };
 }
@@ -144,12 +143,7 @@ function procedureVariantsForQuery(input) {
 function isValidYMD(y, m, d) {
   if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
   const dt = new Date(y, m - 1, d);
-  return (
-    !Number.isNaN(dt.getTime()) &&
-    dt.getFullYear() === y &&
-    dt.getMonth() === m - 1 &&
-    dt.getDate() === d
-  );
+  return !Number.isNaN(dt.getTime()) && dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
 }
 
 function isPastDate(y, m, d) {
@@ -265,21 +259,22 @@ router.post("/", requireAuth, async (req, res) => {
     const variants = procedureVariantsForQuery(procedure);
 
     /**
-     * Enforce: patient cannot submit same procedure again if active exists
+     * ✅ Enforce: patient cannot submit ANOTHER appointment if ANY active exists
      * Active = Pending or Approved
      */
-    const existingActive = await Appointment.findOne({
-      patientId: patientIdQuery(req.userId), // ✅ robust match for old records
-      procedure: { $in: variants },
+    const existingActiveAny = await Appointment.findOne({
+      patientId: patientIdQuery(req.userId), // robust match for old records
       status: { $in: ["Pending", "Approved"] },
     }).lean();
 
-    if (existingActive) {
+    if (existingActiveAny) {
       return res.status(409).json({
         message:
-          `You already have an active ${pr.label} appointment ` +
-          `(${existingActive.status === "Pending" ? "Submitted for approval" : "Approved"}). ` +
-          `You can submit again only after it is Cancelled or Completed.`,
+          `You already have an active appointment (${existingActiveAny.status}) for ${existingActiveAny.procedure} on ${fmtYMD(
+            existingActiveAny.year,
+            existingActiveAny.month,
+            existingActiveAny.day
+          )}. ` + `You can submit again only after it is Cancelled, Rejected, or Completed.`,
       });
     }
 
@@ -303,7 +298,7 @@ router.post("/", requireAuth, async (req, res) => {
     // Create as Pending
     const appt = await Appointment.create({
       patientId: patientObjectId,
-      procedure: pr.label, // ✅ store standardized/canonical label
+      procedure: pr.label, // store standardized/canonical label
       year: y,
       month: m,
       day: d,
@@ -315,8 +310,8 @@ router.post("/", requireAuth, async (req, res) => {
     if (err && err.code === 11000) {
       return res.status(409).json({
         message:
-          "You already have an active appointment for this procedure. " +
-          "You can submit again only after it is Cancelled or Completed.",
+          "You already have an active appointment. " +
+          "You can submit again only after it is Cancelled, Rejected, or Completed.",
       });
     }
 
@@ -378,8 +373,7 @@ router.get("/mine-bills", requireAuth, async (req, res) => {
     const bills = appts.map((a) => {
       const issuedAt = a.completedAt || a.updatedAt || a.createdAt || null;
 
-      const procedureLabel =
-        a.billing?.label || a.billingLabel || a.procedureDone || a.procedure || "—";
+      const procedureLabel = a.billing?.label || a.billingLabel || a.procedureDone || a.procedure || "—";
 
       const amount =
         (typeof a.billing?.amount === "number" ? a.billing.amount : undefined) ??

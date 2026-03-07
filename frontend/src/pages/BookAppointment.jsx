@@ -249,11 +249,7 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
     const gridStart = new Date(view.getFullYear(), view.getMonth(), 1 - startDow);
 
     return Array.from({ length: 42 }, (_, i) => {
-      const d = new Date(
-        gridStart.getFullYear(),
-        gridStart.getMonth(),
-        gridStart.getDate() + i
-      );
+      const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
       const iso = toLocalISODate(d);
       return {
         d,
@@ -267,19 +263,10 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
 
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <button
           type="button"
-          onClick={() =>
-            setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() - 1, 1)))
-          }
+          onClick={() => setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() - 1, 1)))}
           disabled={prevDisabled}
           style={{
             width: 34,
@@ -300,9 +287,7 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
 
         <button
           type="button"
-          onClick={() =>
-            setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() + 1, 1)))
-          }
+          onClick={() => setView((v) => monthStart(new Date(v.getFullYear(), v.getMonth() + 1, 1)))}
           style={{
             width: 34,
             height: 34,
@@ -422,16 +407,15 @@ export default function BookAppointment() {
   const [slipFile, setSlipFile] = useState(null);
   const slipInputRef = useRef(null);
 
-  // ✅ If user uploaded a slip and didn't select a procedure, use a safe fallback.
-  // Change "X-Ray" if you prefer another placeholder value.
-  const procedureForBooking = useMemo(() => {
-    const p = String(form.procedure || "").trim();
-    if (p) return p;
-    return slipFile ? "X-Ray" : "";
-  }, [form.procedure, slipFile]);
-
   // ✅ local-safe today ISO (avoid off-by-one in some timezones)
   const todayIso = toLocalISODate(new Date());
+
+  // ✅ Availability should still work even if procedure is not selected but slip is uploaded
+  const procedureForAvailability = useMemo(() => {
+    if (form.procedure) return form.procedure;
+    if (slipFile) return "X-Ray"; // fallback label used for slot checking when slip is provided
+    return "";
+  }, [form.procedure, slipFile]);
 
   async function loadAll() {
     const token = localStorage.getItem("token");
@@ -558,36 +542,34 @@ export default function BookAppointment() {
     const token = localStorage.getItem("token");
     if (!token || !bookOpen) return;
 
-    if (!procedureForBooking || !form.date) {
+    if (!procedureForAvailability || !form.date) {
       setAvailability(null);
       return;
     }
 
-    const q = `?procedure=${encodeURIComponent(procedureForBooking)}&date=${encodeURIComponent(
-      form.date
-    )}`;
+    const q = `?procedure=${encodeURIComponent(procedureForAvailability)}&date=${encodeURIComponent(form.date)}`;
     setCheckingAvail(true);
 
     apiGet(`/api/appointments/availability${q}`, token)
       .then((data) => setAvailability(data))
       .catch(() => setAvailability(null))
       .finally(() => setCheckingAvail(false));
-  }, [bookOpen, procedureForBooking, form.date]);
+  }, [bookOpen, procedureForAvailability, form.date]);
 
-  const activeStatuses = useMemo(() => new Set(["Pending", "Approved"]), []);
-
-  const hasActiveSameProcedure =
-    !!procedureForBooking &&
-    appointments.some(
-      (a) =>
-        String(a?.procedure || "").trim() === procedureForBooking &&
-        activeStatuses.has(a.status)
+  // ✅ ONE ACTIVE APPOINTMENT RULE (Pending/Approved blocks new booking)
+  const activeAppointment = useMemo(() => {
+    return (
+      (appointments || []).find((a) => {
+        const s = String(a?.status || "");
+        return s === "Pending" || s === "Approved";
+      }) || null
     );
+  }, [appointments]);
 
-  const noSlots =
-    availability && typeof availability.remaining === "number" && availability.remaining <= 0;
+  const hasActiveAppointment = !!activeAppointment;
 
-  const submitDisabled = saving || uploadingSlip || checkingAvail || noSlots || hasActiveSameProcedure;
+  const noSlots = availability && typeof availability.remaining === "number" && availability.remaining <= 0;
+  const submitDisabled = saving || uploadingSlip || checkingAvail || noSlots || hasActiveAppointment;
 
   async function uploadRequestSlip(token, appointmentId, file) {
     const fd = new FormData();
@@ -614,12 +596,20 @@ export default function BookAppointment() {
       setSaving(true);
       setMsg("");
 
-      if (!procedureForBooking) return setMsg("Please select a procedure or upload a request slip.");
+      // ✅ Procedure is optional ONLY if slipFile exists
+      if (!form.procedure && !slipFile) return setMsg("Please select a procedure or upload a request slip.");
       if (!form.date) return setMsg("Please select a date.");
 
-      if (hasActiveSameProcedure) {
+      // ✅ Block booking if ANY active appointment exists (Pending/Approved)
+      if (hasActiveAppointment) {
+        const dtExisting = toDateObj(activeAppointment);
+        const dateExisting = dtExisting ? dtExisting.toLocaleDateString() : "-";
+        const procExisting = activeAppointment?.procedure || "—";
+        const statusExisting = activeAppointment?.status || "—";
+
         return setMsg(
-          `You already have an active ${procedureForBooking} appointment (Pending/Approved). Please cancel/complete it before booking again.`
+          `You already have an active appointment (${statusExisting}) for "${procExisting}" on ${dateExisting}. ` +
+            `Please cancel it or wait until it is Completed, Cancelled, or Rejected before booking again.`
         );
       }
 
@@ -636,8 +626,11 @@ export default function BookAppointment() {
         if (slipFile.size > maxBytes) return setMsg("Request slip file is too large (max 10MB).");
       }
 
+      // ✅ If procedure not selected but slip exists, save a safe fallback label
+      const procedureToSave = form.procedure || "X-Ray";
+
       const [y, m, d] = form.date.split("-").map(Number);
-      const payload = { procedure: procedureForBooking, year: y, month: m, day: d };
+      const payload = { procedure: procedureToSave, year: y, month: m, day: d };
 
       const created = await apiPost("/api/appointments", payload, token);
 
@@ -756,9 +749,7 @@ export default function BookAppointment() {
      NEW LAYOUT (Mobile/Tablet) — uses global CSS (profileShell)
      ========================================================= */
   if (isNarrow) {
-    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""]
-      .filter(Boolean)
-      .join(" ");
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
 
     // mobile-friendly control styles
     const mLabel = { fontSize: 13, fontWeight: 900, color: "#0f172a", marginBottom: 6 };
@@ -905,13 +896,7 @@ export default function BookAppointment() {
     const modalSub = { margin: "6px 0 0", fontSize: 13, opacity: 0.9, fontWeight: 700 };
     const modalInner = { flex: 1, overflow: "auto", paddingRight: 6 };
 
-    const modalGrid = {
-      display: "grid",
-      gridTemplateColumns: "1fr",
-      gap: 14,
-      alignItems: "start",
-      marginTop: 10,
-    };
+    const modalGrid = { display: "grid", gridTemplateColumns: "1fr", gap: 14, alignItems: "start", marginTop: 10 };
 
     const field = { marginBottom: 12 };
     const fieldLabel = { color: "#fff", fontWeight: 900, fontSize: 16, marginBottom: 8 };
@@ -987,13 +972,7 @@ export default function BookAppointment() {
               <div className="brandText">AXIS</div>
             </div>
 
-            <button
-              type="button"
-              className="headerBtn"
-              onClick={() => setDrawerOpen(false)}
-              aria-label="Close menu"
-              title="Close"
-            >
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
               ✕
             </button>
           </div>
@@ -1271,7 +1250,7 @@ export default function BookAppointment() {
                             value={form.procedure}
                             onChange={onBookChange}
                             style={select}
-                            required={!slipFile}
+                            required={!slipFile} // ✅ only required when no slip
                           >
                             <option value="">Type of Procedure</option>
                             {XRAY_PROCEDURE_ITEMS.map((x) => (
@@ -1344,8 +1323,8 @@ export default function BookAppointment() {
                           </div>
                         </div>
 
-                        {!procedureForBooking || !form.date ? (
-                          <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
+                        {!procedureForAvailability || !form.date ? (
+                          <div style={hintLine("muted")}>Select a date (and optionally a procedure) to see availability.</div>
                         ) : checkingAvail ? (
                           <div style={hintLine("muted")}>Checking availability...</div>
                         ) : availability ? (
@@ -1356,8 +1335,10 @@ export default function BookAppointment() {
                           <div style={hintLine("muted")}>Availability unavailable.</div>
                         )}
 
-                        {hasActiveSameProcedure ? (
-                          <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div>
+                        {hasActiveAppointment ? (
+                          <div style={hintLine("bad")}>
+                            You already have an active appointment. Please cancel/complete it before booking again.
+                          </div>
                         ) : null}
                       </div>
                     </div>
@@ -1474,12 +1455,7 @@ export default function BookAppointment() {
     border: active ? "2px solid rgba(255,255,255,.95)" : "2px solid rgba(255,255,255,.12)",
   });
 
-  const navItemClosedWrap = {
-    display: "flex",
-    justifyContent: "center",
-    marginBottom: 12,
-    textDecoration: "none",
-  };
+  const navItemClosedWrap = { display: "flex", justifyContent: "center", marginBottom: 12, textDecoration: "none" };
 
   const navIconBtn = (active) => ({
     width: 46,
@@ -1492,12 +1468,7 @@ export default function BookAppointment() {
     border: active ? `2px solid ${DARK}` : "2px solid rgba(255,255,255,.25)",
   });
 
-  const sideFooter = {
-    padding: "14px 14px 18px",
-    color: "rgba(255,255,255,.92)",
-    fontWeight: 700,
-    fontSize: 12.5,
-  };
+  const sideFooter = { padding: "14px 14px 18px", color: "rgba(255,255,255,.92)", fontWeight: 700, fontSize: 12.5 };
   const footerRow = { display: "flex", alignItems: "center", gap: 10, marginTop: 10 };
 
   const main = {
@@ -1590,12 +1561,7 @@ export default function BookAppointment() {
 
   const ddName = { fontWeight: 900, fontSize: 16, color: "#fff" };
   const ddSub = { fontSize: 12, color: "rgba(255,255,255,.85)", marginTop: 2 };
-  const ddDivider = {
-    height: 2,
-    background: "rgba(255,255,255,.6)",
-    borderRadius: 999,
-    margin: "10px 0 10px",
-  };
+  const ddDivider = { height: 2, background: "rgba(255,255,255,.6)", borderRadius: 999, margin: "10px 0 10px" };
 
   const ddActions = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
 
@@ -1613,18 +1579,8 @@ export default function BookAppointment() {
     whiteSpace: "nowrap",
   };
 
-  const ddSignOutBtn = {
-    ...ddBtnBase,
-    background: "transparent",
-    color: "#fff",
-    border: "2px solid rgba(255,255,255,.75)",
-  };
-  const ddEditBtn = {
-    ...ddBtnBase,
-    background: "#fff",
-    color: "#0f172a",
-    border: "2px solid rgba(255,255,255,.9)",
-  };
+  const ddSignOutBtn = { ...ddBtnBase, background: "transparent", color: "#fff", border: "2px solid rgba(255,255,255,.75)" };
+  const ddEditBtn = { ...ddBtnBase, background: "#fff", color: "#0f172a", border: "2px solid rgba(255,255,255,.9)" };
 
   const content = { flex: "1 1 auto", overflow: "auto", paddingRight: 4 };
   const contentWrap = { maxWidth: 1180 };
@@ -1692,12 +1648,7 @@ export default function BookAppointment() {
     marginTop: 14,
   };
 
-  const apptPanelTop = {
-    display: "flex",
-    justifyContent: "flex-end",
-    padding: "4px 8px 10px",
-    flex: "0 0 auto",
-  };
+  const apptPanelTop = { display: "flex", justifyContent: "flex-end", padding: "4px 8px 10px", flex: "0 0 auto" };
 
   const addApptBtn = {
     display: "inline-flex",
@@ -1795,13 +1746,7 @@ export default function BookAppointment() {
 
   const modalInner = { flex: 1, overflow: "auto", paddingRight: 6 };
 
-  const modalGrid = {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 0.95fr",
-    gap: 22,
-    alignItems: "start",
-    marginTop: 8,
-  };
+  const modalGrid = { display: "grid", gridTemplateColumns: "1fr 1fr 0.95fr", gap: 22, alignItems: "start", marginTop: 8 };
 
   const field = { marginBottom: 14 };
   const fieldLabel = { color: "#fff", fontWeight: 900, fontSize: 20, marginBottom: 8 };
@@ -1830,14 +1775,7 @@ export default function BookAppointment() {
     padding: 10,
   };
 
-  const bottomRow = {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 14,
-    marginTop: 8,
-    flexWrap: "wrap",
-  };
+  const bottomRow = { display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 8, flexWrap: "wrap" };
 
   const procWrap = { display: "flex", alignItems: "center", gap: 12 };
   const orText = { color: "#fff", fontWeight: 900, opacity: 0.85 };
@@ -1894,13 +1832,7 @@ export default function BookAppointment() {
           )}
 
           {sideOpen ? (
-            <button
-              type="button"
-              style={headerBtn}
-              onClick={toggleSidebarDesktop}
-              aria-label="Collapse sidebar"
-              title="Collapse"
-            >
+            <button type="button" style={headerBtn} onClick={toggleSidebarDesktop} aria-label="Collapse sidebar" title="Collapse">
               ☰
             </button>
           ) : null}
@@ -2195,7 +2127,7 @@ export default function BookAppointment() {
                               value={form.procedure}
                               onChange={onBookChange}
                               style={select}
-                              required={!slipFile}
+                              required={!slipFile} // ✅ only required when no slip
                             >
                               <option value="">Type of Procedure</option>
                               {XRAY_PROCEDURE_ITEMS.map((x) => (
@@ -2270,8 +2202,8 @@ export default function BookAppointment() {
                         </div>
                       </div>
 
-                      {!procedureForBooking || !form.date ? (
-                        <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
+                      {!procedureForAvailability || !form.date ? (
+                        <div style={hintLine("muted")}>Select a date (and optionally a procedure) to see availability.</div>
                       ) : checkingAvail ? (
                         <div style={hintLine("muted")}>Checking availability...</div>
                       ) : availability ? (
@@ -2282,8 +2214,10 @@ export default function BookAppointment() {
                         <div style={hintLine("muted")}>Availability unavailable.</div>
                       )}
 
-                      {hasActiveSameProcedure ? (
-                        <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div>
+                      {hasActiveAppointment ? (
+                        <div style={hintLine("bad")}>
+                          You already have an active appointment. Please cancel/complete it before booking again.
+                        </div>
                       ) : null}
                     </div>
                   </div>

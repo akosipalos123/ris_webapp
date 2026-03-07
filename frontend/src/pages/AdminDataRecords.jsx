@@ -81,6 +81,14 @@ const SearchIcon = (p) => (
   </Icon>
 );
 
+const PrinterIcon = (p) => (
+  <Icon {...p}>
+    <polyline points="6 9 6 2 18 2 18 9" />
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+    <rect x="6" y="14" width="12" height="8" rx="1" />
+  </Icon>
+);
+
 /* ---------- HELPERS ---------- */
 function toDateObj(a) {
   if (a?.date) {
@@ -111,15 +119,13 @@ function shortId(id) {
 function getPatientIdValue(patientId) {
   if (!patientId) return "—";
 
-  // populated object
   if (typeof patientId === "object") {
     if (patientId?.bsrtId) return String(patientId.bsrtId).trim();
-    if (patientId?.bsrtID) return String(patientId.bsrtID).trim(); // optional alt casing
+    if (patientId?.bsrtID) return String(patientId.bsrtID).trim();
     if (patientId?._id) return shortId(patientId._id);
     return "—";
   }
 
-  // not populated (string ObjectId)
   return shortId(patientId);
 }
 
@@ -147,6 +153,49 @@ function isPdfUrl(url) {
   return noQuery.endsWith(".pdf") || noQuery.includes(".pdf") || lower.includes("format=pdf");
 }
 
+function getFirstDiagnosticUrl(item) {
+  const list = Array.isArray(item?.diagnosticImages) ? item.diagnosticImages : [];
+  for (const img of list) {
+    const url = typeof img === "string" ? img : img?.url || img?.secureUrl || img?.path || "";
+    if (url) return url;
+  }
+  return "";
+}
+
+function getPatientDobObj(patientId) {
+  if (!patientId || typeof patientId === "string") return null;
+  const raw = patientId.dob || patientId.birthDate || patientId.dateOfBirth || patientId.birthday;
+  if (!raw) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function calcAge(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age -= 1;
+  return age;
+}
+
+function getPatientSex(patientId) {
+  if (!patientId || typeof patientId === "string") return "";
+  return (
+    String(patientId.sex || patientId.gender || patientId.mf || patientId.sexAtBirth || "")
+      .trim()
+      .toUpperCase() || ""
+  );
+}
+function getPatientContact(patientId) {
+  if (!patientId || typeof patientId === "string") return "";
+  return String(patientId.contactNumber || patientId.phone || patientId.mobile || "").trim();
+}
+function getPatientEmail(patientId) {
+  if (!patientId || typeof patientId === "string") return "";
+  return String(patientId.email || patientId.emailAddress || "").trim();
+}
+
 export default function AdminDataRecords() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -156,7 +205,6 @@ export default function AdminDataRecords() {
   const [checkingAdmin, setCheckingAdmin] = useState(true);
 
   const [adminProfile, setAdminProfile] = useState(null);
-
   const [rows, setRows] = useState([]);
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -168,11 +216,15 @@ export default function AdminDataRecords() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Newest");
 
+  // ✅ Patient Records modal (intermediate modal)
+  const [patientModalOpen, setPatientModalOpen] = useState(false);
+  const [selectedPatientKey, setSelectedPatientKey] = useState("");
+
+  // ✅ Diagnostic Record modal (existing modal)
   const [viewOpen, setViewOpen] = useState(false);
   const [viewItem, setViewItem] = useState(null);
 
   // ✅ Receipt meta (per appointment)
-  // { [appointmentId]: { billId: string|null, receiptUrl: string } }
   const [billMeta, setBillMeta] = useState({});
   const [metaLoading, setMetaLoading] = useState(false);
 
@@ -208,7 +260,6 @@ export default function AdminDataRecords() {
       return false;
     }
 
-    // Prefer adminToken if present
     if (adminToken) {
       try {
         const me = await apiGet("/api/admin/auth/me", adminToken);
@@ -219,7 +270,6 @@ export default function AdminDataRecords() {
       }
     }
 
-    // Fallback: patient token role check
     if (!token) {
       nav("/login");
       return false;
@@ -239,6 +289,13 @@ export default function AdminDataRecords() {
       nav("/login");
       return false;
     }
+  }
+
+  function getDateMs(a) {
+    const dt = toDateObj(a);
+    if (dt) return dt.getTime();
+    const c = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+    return Number.isFinite(c) ? c : 0;
   }
 
   async function loadBillMetaFor(list) {
@@ -277,7 +334,9 @@ export default function AdminDataRecords() {
       setLoading(true);
       setMsg("");
 
+      // Keep your current behavior (Completed)
       const data = await apiGet("/api/admin/appointments?status=Completed", authToken);
+
       const list = Array.isArray(data) ? data : [];
       setRows(list);
 
@@ -321,6 +380,17 @@ export default function AdminDataRecords() {
     };
   }, [menuOpen]);
 
+  // close patient modal on ESC
+  useEffect(() => {
+    if (!patientModalOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") closePatientModal();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientModalOpen]);
+
   // close view modal on ESC
   useEffect(() => {
     if (!viewOpen) return;
@@ -353,13 +423,10 @@ export default function AdminDataRecords() {
 
   const adminFullName = useMemo(() => {
     if (!adminProfile) return "";
-    const base = [adminProfile.lastName, adminProfile.firstName, adminProfile.middleName]
-      .filter(Boolean)
-      .join(", ");
+    const base = [adminProfile.lastName, adminProfile.firstName, adminProfile.middleName].filter(Boolean).join(", ");
     return `${base}${adminProfile.suffix ? `, ${adminProfile.suffix}` : ""}`;
   }, [adminProfile]);
 
-  // ✅ prefer bsrtId, fallback
   const adminIdShort = useMemo(() => {
     if (adminProfile?.bsrtId) return String(adminProfile.bsrtId).trim();
     if (adminProfile?.bsrtID) return String(adminProfile.bsrtID).trim();
@@ -367,42 +434,88 @@ export default function AdminDataRecords() {
     return "—";
   }, [adminProfile]);
 
-  // ✅ label like Profile.jsx
   const roleClean = useMemo(() => getRoleClean(adminProfile), [adminProfile]);
   const isSuperAdmin = roleClean === "superadmin";
   const idLabelText = isSuperAdmin ? "Superadmin ID" : "Admin ID";
 
-  const filtered = useMemo(() => {
+  // ✅ Group appointments into 1 row per Patient ID
+  const patientGroups = useMemo(() => {
+    const map = new Map();
+
+    for (const a of rows) {
+      const p = a?.patientId || null;
+
+      let pidKey = getPatientIdValue(p);
+      // avoid collapsing into one bucket if pidKey is "—"
+      if (!pidKey || pidKey === "—") {
+        const raw = typeof p === "string" ? p : p?._id;
+        pidKey = raw ? shortId(raw) : `UNK_${String(a?._id || Math.random())}`;
+      }
+
+      if (!map.has(pidKey)) {
+        map.set(pidKey, {
+          key: pidKey,
+          patient: p,
+          name: getPatientNameValue(p),
+          records: [],
+          newestMs: 0,
+          oldestMs: 0,
+        });
+      }
+
+      map.get(pidKey).records.push(a);
+    }
+
+    const groups = Array.from(map.values());
+    for (const g of groups) {
+      g.records.sort((a, b) => getDateMs(b) - getDateMs(a));
+      g.newestMs = g.records.length ? getDateMs(g.records[0]) : 0;
+      g.oldestMs = g.records.length ? getDateMs(g.records[g.records.length - 1]) : 0;
+    }
+
+    return groups;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
+
+  // ✅ Find selected group (so it stays fresh if rows change)
+  const selectedGroup = useMemo(() => {
+    if (!selectedPatientKey) return null;
+    return patientGroups.find((g) => g.key === selectedPatientKey) || null;
+  }, [patientGroups, selectedPatientKey]);
+
+  // ✅ Filter + Sort (patient-level)
+  const filteredPatients = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let list = rows;
+    let list = patientGroups;
 
     if (q) {
-      list = list.filter((a) => {
-        const p = a.patientId || null;
-        const name = getPatientNameValue(p).toLowerCase();
-        const pid = getPatientIdValue(p).toLowerCase();
-        const proc = String(a.procedure || "").toLowerCase();
-        return name.includes(q) || pid.includes(q) || proc.includes(q);
+      list = list.filter((g) => {
+        const name = String(g.name || "").toLowerCase();
+        const pid = String(g.key || "").toLowerCase();
+        const procHit = g.records.some((r) => String(r.procedure || "").toLowerCase().includes(q));
+        return name.includes(q) || pid.includes(q) || procHit;
       });
     }
 
-    const getDate = (a) => {
-      const dt = toDateObj(a);
-      if (dt) return dt.getTime();
-      const c = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      return Number.isFinite(c) ? c : 0;
-    };
-
-    const getName = (a) => getPatientNameValue(a.patientId || null).toLowerCase();
-
     const sorted = [...list];
-    if (sort === "Newest") sorted.sort((a, b) => getDate(b) - getDate(a));
-    if (sort === "Oldest") sorted.sort((a, b) => getDate(a) - getDate(b));
-    if (sort === "Name A-Z") sorted.sort((a, b) => getName(a).localeCompare(getName(b)));
-    if (sort === "Name Z-A") sorted.sort((a, b) => getName(b).localeCompare(getName(a)));
+    if (sort === "Newest") sorted.sort((a, b) => b.newestMs - a.newestMs);
+    if (sort === "Oldest") sorted.sort((a, b) => a.oldestMs - b.oldestMs);
+    if (sort === "Name A-Z") sorted.sort((a, b) => String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase()));
+    if (sort === "Name Z-A") sorted.sort((a, b) => String(b.name || "").toLowerCase().localeCompare(String(a.name || "").toLowerCase()));
 
     return sorted;
-  }, [rows, search, sort]);
+  }, [patientGroups, search, sort]);
+
+  function openPatientModal(groupKey) {
+    setMsg("");
+    setSelectedPatientKey(groupKey);
+    setPatientModalOpen(true);
+  }
+
+  function closePatientModal() {
+    setPatientModalOpen(false);
+    setSelectedPatientKey("");
+  }
 
   function openView(item) {
     setMsg("");
@@ -464,7 +577,7 @@ export default function AdminDataRecords() {
     }
   }
 
-  /* ---------- STYLES (match screenshot) ---------- */
+  /* ---------- STYLES ---------- */
   const DARK = "#0b3d2e";
   const BG = "#ffffff";
 
@@ -745,9 +858,10 @@ export default function AdminDataRecords() {
     cursor: "pointer",
   };
 
+  // MAIN TABLE (patient-level)
   const tableHeader = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 1fr 0.55fr 0.75fr",
+    gridTemplateColumns: "1.2fr 1fr 0.45fr 0.6fr",
     gap: 14,
     padding: "10px 12px",
     fontWeight: 900,
@@ -761,7 +875,7 @@ export default function AdminDataRecords() {
 
   const row = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 1fr 0.55fr 0.75fr",
+    gridTemplateColumns: "1.2fr 1fr 0.45fr 0.6fr",
     gap: 14,
     padding: "12px 12px",
     alignItems: "center",
@@ -783,29 +897,292 @@ export default function AdminDataRecords() {
     whiteSpace: "nowrap",
   });
 
-  const receiptBtn = (disabled, isView) => ({
+  // OVERLAYS (layered modals)
+  const overlayBase = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,.55)",
+    display: "grid",
+    placeItems: "center",
+    padding: 18,
+  };
+  const overlayPatient = { ...overlayBase, zIndex: 1900 };
+  const overlayView = { ...overlayBase, zIndex: 2000 };
+  const overlayReceipt = { ...overlayBase, zIndex: 2100 };
+
+  /* ---------- PATIENT RECORDS MODAL (intermediate) ---------- */
+  const patientBorder = {
+    width: "min(1180px, 96vw)",
+    height: "min(760px, 88vh)",
+    borderRadius: 44,
+    background: "rgba(0,0,0,.55)",
+    padding: 10,
+    boxShadow: "0 28px 80px rgba(0,0,0,.55)",
+    overflow: "hidden",
+  };
+
+  const patientModal = {
     width: "100%",
-    padding: "10px 14px",
-    borderRadius: 2,
-    background: isView ? "#fff" : DARK,
-    color: isView ? DARK : "#fff",
+    height: "100%",
+    borderRadius: 36,
+    background: "linear-gradient(180deg, rgba(0,0,0,.62) 0%, rgba(11,61,46,.96) 22%, rgba(11,61,46,.92) 100%)",
+    border: "2px solid rgba(255,255,255,.12)",
+    boxShadow: "inset 0 0 0 6px rgba(255,255,255,.08)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    color: "#fff",
+  };
+
+  const patientTop = {
+    padding: "18px 22px 10px",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+  };
+
+  const patientName = {
     fontWeight: 900,
-    border: `2px solid ${DARK}`,
+    fontSize: 34,
+    lineHeight: 1.1,
+    letterSpacing: 0.2,
+    textShadow: "0 2px 10px rgba(0,0,0,.35)",
+  };
+
+  const closeX = {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    border: "2px solid rgba(255,255,255,.35)",
+    background: "transparent",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 900,
+    display: "grid",
+    placeItems: "center",
+    userSelect: "none",
+    flex: "0 0 auto",
+  };
+
+  const patientInfoRow = {
+    marginTop: 10,
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 28,
+    maxWidth: 980,
+  };
+
+  const infoCol = { display: "grid", gap: 8 };
+  const infoLabel = { fontWeight: 900, fontSize: 14, opacity: 0.9 };
+  const infoValue = { fontWeight: 800, fontSize: 13, opacity: 0.95 };
+
+  const apptPill = {
+    margin: "10px 22px 14px",
+    background: "#fff",
+    borderRadius: 999,
+    padding: "10px 18px",
+    display: "grid",
+    placeItems: "center",
+    color: DARK,
+    fontWeight: 900,
+    fontSize: 30,
+    letterSpacing: 0.5,
+  };
+
+  const apptHead = {
+    margin: "0 22px",
+    display: "grid",
+    gridTemplateColumns: "0.9fr 1.2fr 0.7fr 0.6fr 0.6fr",
+    gap: 12,
+    padding: "10px 12px",
+    fontWeight: 900,
+    color: "#fff",
+    borderTop: "2px solid rgba(255,255,255,.35)",
+    borderBottom: "2px solid rgba(255,255,255,.35)",
+  };
+
+  const apptBody = {
+    flex: "1 1 auto",
+    minHeight: 0,
+    overflowY: "auto",
+    padding: "0 22px 18px",
+  };
+
+  const apptRow = {
+    display: "grid",
+    gridTemplateColumns: "0.9fr 1.2fr 0.7fr 0.6fr 0.6fr",
+    gap: 12,
+    padding: "12px 12px",
+    alignItems: "center",
+    borderBottom: "1px solid rgba(255,255,255,.25)",
+    fontWeight: 800,
+    color: "#fff",
+  };
+
+  const apptBtn = (disabled, variant = "white") => ({
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 6,
+    background: variant === "white" ? "#fff" : DARK,
+    color: variant === "white" ? DARK : "#fff",
+    fontWeight: 900,
+    border: `2px solid ${variant === "white" ? "rgba(255,255,255,.9)" : DARK}`,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.6 : 1,
     whiteSpace: "nowrap",
   });
 
-  const overlay = {
-    position: "absolute",
-    inset: 0,
-    background: "rgba(0,0,0,.55)",
-    zIndex: 2000,
-    display: "grid",
-    placeItems: "center",
-    padding: 18,
+  const statusPill = (status) => {
+    const s = String(status || "").toLowerCase();
+    const isDone = s === "completed";
+    return {
+      width: "fit-content",
+      padding: "8px 12px",
+      borderRadius: 6,
+      background: isDone ? "#fff" : "#caa20a",
+      color: isDone ? DARK : "#fff",
+      fontWeight: 900,
+      border: "2px solid rgba(255,255,255,.25)",
+    };
   };
 
+  /* ---------- DIAGNOSTIC RECORD MODAL (existing) ---------- */
+  const viewBorder = {
+    width: "min(1100px, 92vw)",
+    height: "min(650px, 82vh)",
+    borderRadius: 44,
+    background: "rgba(0,0,0,.55)",
+    padding: 10,
+    boxShadow: "0 28px 80px rgba(0,0,0,.55)",
+    overflow: "hidden",
+  };
+
+  const viewModal = {
+    width: "100%",
+    height: "100%",
+    borderRadius: 36,
+    background: "linear-gradient(180deg, rgba(0,0,0,.62) 0%, rgba(11,61,46,.96) 22%, rgba(11,61,46,.92) 100%)",
+    border: "2px solid rgba(255,255,255,.12)",
+    boxShadow: "inset 0 0 0 6px rgba(255,255,255,.08)",
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+  };
+
+  const viewTop = {
+    padding: "18px 22px 12px",
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+    color: "#fff",
+  };
+
+  const viewName = {
+    fontWeight: 900,
+    fontSize: 34,
+    lineHeight: 1.05,
+    letterSpacing: 0.2,
+    textShadow: "0 2px 10px rgba(0,0,0,.35)",
+  };
+
+  const viewMetaRow = {
+    marginTop: 10,
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 18,
+    alignItems: "flex-end",
+  };
+
+  const viewMeta = { minWidth: 150, maxWidth: 260 };
+  const viewMetaLabel = { fontWeight: 900, fontSize: 14, opacity: 0.9 };
+  const viewMetaValue = {
+    marginTop: 4,
+    fontWeight: 800,
+    fontSize: 13,
+    opacity: 0.95,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  };
+
+  const viewCloseBtn = { ...closeX };
+
+  const viewBody = {
+    flex: "1 1 auto",
+    minHeight: 0,
+    padding: "0 22px 22px",
+    display: "grid",
+    gridTemplateColumns: "1.05fr 0.95fr",
+    gap: 18,
+    overflow: "hidden",
+  };
+
+  const viewLeft = { minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" };
+
+  const viewSectionTitle = {
+    color: "#fff",
+    fontWeight: 900,
+    fontSize: 32,
+    margin: "0 0 10px",
+  };
+
+  const viewLinedBox = {
+    flex: "1 1 auto",
+    borderRadius: 18,
+    padding: "14px 14px",
+    color: "rgba(255,255,255,.92)",
+    fontWeight: 800,
+    lineHeight: 1.55,
+    whiteSpace: "pre-wrap",
+    overflow: "auto",
+    backgroundColor: "rgba(0,0,0,.10)",
+    backgroundImage:
+      "repeating-linear-gradient(to bottom, rgba(255,255,255,.32), rgba(255,255,255,.32) 1px, rgba(255,255,255,0) 1px, rgba(255,255,255,0) 34px)",
+  };
+
+  const viewBtnRow = { marginTop: 14, display: "flex", gap: 14, flexWrap: "wrap" };
+
+  const viewActionBtn = {
+    background: "#fff",
+    color: DARK,
+    border: "2px solid rgba(255,255,255,.9)",
+    borderRadius: 8,
+    padding: "12px 18px",
+    fontWeight: 900,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 10,
+    userSelect: "none",
+  };
+
+  const viewRight = { minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" };
+
+  const viewImageFrame = {
+    flex: "1 1 auto",
+    borderRadius: 18,
+    overflow: "hidden",
+    background: "rgba(255,255,255,.08)",
+    border: "2px solid rgba(255,255,255,.18)",
+    display: "grid",
+    placeItems: "center",
+  };
+
+  const viewPreviewImg = {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    background: "#fff",
+    display: "block",
+  };
+
+  const viewPreviewFrame = { width: "100%", height: "100%", border: 0, background: "#fff" };
+
+  const viewEmpty = { padding: 18, color: "rgba(255,255,255,.85)", fontWeight: 900 };
+
+  /* ---------- RECEIPT MODAL ---------- */
   const modal = {
     width: "min(980px, 96%)",
     maxHeight: "90vh",
@@ -832,9 +1209,6 @@ export default function AdminDataRecords() {
     padding: 16,
   };
 
-  const label = { fontWeight: 900, color: "#0f172a", marginTop: 10 };
-  const value = { fontWeight: 800, color: "#0f172a", marginTop: 4 };
-
   const linkBtn = {
     display: "inline-flex",
     alignItems: "center",
@@ -860,27 +1234,6 @@ export default function AdminDataRecords() {
     textDecoration: "none",
     border: `2px solid ${DARK}`,
     cursor: "pointer",
-  };
-
-  const imgGrid = {
-    marginTop: 10,
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: 10,
-  };
-
-  const imgCard = {
-    border: "1px solid rgba(0,0,0,.15)",
-    borderRadius: 12,
-    overflow: "hidden",
-    background: "#fff",
-  };
-
-  const imgEl = {
-    width: "100%",
-    height: 120,
-    objectFit: "cover",
-    display: "block",
   };
 
   const SIDE_ITEMS = [
@@ -1051,41 +1404,136 @@ export default function AdminDataRecords() {
                 </div>
               </div>
 
-              {/* Table */}
+              {/* Patient-level Table */}
               <div style={tableHeader}>
                 <div>Patient Name</div>
                 <div>Patient ID</div>
+                <div>Records</div>
                 <div />
-                <div>Receipt</div>
               </div>
 
               <div style={tableBody}>
                 {loading ? (
                   <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>Loading records...</div>
-                ) : filtered.length === 0 ? (
-                  <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>No records found.</div>
+                ) : filteredPatients.length === 0 ? (
+                  <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>No patients found.</div>
                 ) : (
-                  filtered.map((a) => {
-                    const name = getPatientNameValue(a.patientId || null);
-                    const pid = getPatientIdValue(a.patientId || null); // ✅ bsrtId preferred
+                  filteredPatients.map((g) => (
+                    <div key={g.key} style={row}>
+                      <div>{g.name || "—"}</div>
+                      <div>{g.key || "—"}</div>
+                      <div style={{ fontWeight: 900 }}>{g.records.length}</div>
+                      <div>
+                        <button type="button" style={actionBtn(false)} onClick={() => openPatientModal(g.key)}>
+                          View
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
 
+            <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>
+              RISWebApp • Admin
+            </div>
+          </div>
+        </div>
+
+        {/* PATIENT RECORDS MODAL (shows all records for Patient ID) */}
+        {patientModalOpen && selectedGroup ? (
+          <div style={overlayPatient} onClick={closePatientModal} role="dialog" aria-modal="true" aria-label="Patient records">
+            <div style={patientBorder} onClick={(e) => e.stopPropagation()}>
+              <div style={patientModal}>
+                <div style={patientTop}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={patientName}>{selectedGroup.name || "—"}</div>
+
+                    {(() => {
+                      const p = selectedGroup.patient || null;
+                      const pid = selectedGroup.key;
+
+                      const dob = getPatientDobObj(p);
+                      const age = calcAge(dob);
+                      const dobText = dob ? dob.toLocaleDateString() : "—";
+
+                      const sex = getPatientSex(p) || "—";
+                      const contact = getPatientContact(p) || "—";
+                      const email = getPatientEmail(p) || "—";
+
+                      return (
+                        <div style={patientInfoRow}>
+                          <div style={infoCol}>
+                            <div>
+                              <div style={infoLabel}>Patient ID</div>
+                              <div style={infoValue}>{pid}</div>
+                            </div>
+
+                            <div>
+                              <div style={infoLabel}>Birthdate</div>
+                              <div style={infoValue}>
+                                {dobText}
+                                {Number.isFinite(age) ? ` • ${age} years old` : ""}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={infoCol}>
+                            <div>
+                              <div style={infoLabel}>M/F</div>
+                              <div style={infoValue}>{sex}</div>
+                            </div>
+
+                            <div>
+                              <div style={infoLabel}>Contact Number</div>
+                              <div style={infoValue}>{contact}</div>
+                            </div>
+
+                            <div>
+                              <div style={infoLabel}>Email Address</div>
+                              <div style={infoValue}>{email}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <button type="button" style={closeX} onClick={closePatientModal} aria-label="Close">
+                    ✕
+                  </button>
+                </div>
+
+                <div style={apptPill}>APPOINTMENTS</div>
+
+                <div style={apptHead}>
+                  <div>Date</div>
+                  <div>Procedure</div>
+                  <div>Status</div>
+                  <div />
+                  <div />
+                </div>
+
+                <div style={apptBody}>
+                  {selectedGroup.records.map((a) => {
                     const apptId = a._id;
+                    const dt = toDateObj(a);
+                    const dateText = dt ? dt.toLocaleDateString() : "—";
+                    const proc = a.procedure || "—";
+                    const status = a.status || "Completed";
+
                     const meta = billMeta?.[apptId];
                     const receiptUrl = meta?.receiptUrl || "";
                     const isUploading = !!uploading?.[apptId];
-
                     const metaReady = meta !== undefined || !metaLoading;
-                    const inputId = `receipt_${apptId}`;
+                    const inputId = `receipt_file_${apptId}`;
 
                     return (
-                      <div key={a._id} style={row}>
-                        <div>{name}</div>
-                        <div>{pid}</div>
-
+                      <div key={apptId} style={apptRow}>
+                        <div>{dateText}</div>
+                        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proc}</div>
                         <div>
-                          <button type="button" style={actionBtn(false)} onClick={() => openView(a)}>
-                            View
-                          </button>
+                          <span style={statusPill(status)}>{status}</span>
                         </div>
 
                         <div>
@@ -1103,103 +1551,155 @@ export default function AdminDataRecords() {
                           />
 
                           {receiptUrl ? (
-                            <button type="button" style={receiptBtn(false, true)} onClick={() => openReceiptModal(receiptUrl)}>
+                            <button type="button" style={apptBtn(false, "white")} onClick={() => openReceiptModal(receiptUrl)}>
                               View Receipt
                             </button>
                           ) : (
                             <button
                               type="button"
-                              style={receiptBtn(isUploading || !metaReady, false)}
+                              style={apptBtn(isUploading || !metaReady, "white")}
                               disabled={isUploading || !metaReady}
                               onClick={() => {
                                 const el = document.getElementById(inputId);
                                 if (el) el.click();
                               }}
                             >
-                              {isUploading ? "Uploading..." : metaReady ? "Upload Receipt" : "Loading..."}
+                              {isUploading ? "Uploading..." : metaReady ? "Upload" : "Loading..."}
                             </button>
                           )}
                         </div>
+
+                        <div>
+                          <button type="button" style={apptBtn(false, "white")} onClick={() => openView(a)}>
+                            View
+                          </button>
+                        </div>
                       </div>
                     );
-                  })
-                )}
-              </div>
-            </div>
-
-            <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>
-              RISWebApp • Admin
-            </div>
-          </div>
-        </div>
-
-        {/* VIEW MODAL */}
-        {viewOpen && viewItem ? (
-          <div style={overlay} onClick={closeView} role="dialog" aria-modal="true" aria-label="View record">
-            <div style={modal} onClick={(e) => e.stopPropagation()}>
-              <div style={modalHeader}>
-                <h2 style={modalTitle}>Diagnostic Record</h2>
-                <div style={modalSub}>
-                  {getPatientNameValue(viewItem.patientId || null)} • {getPatientIdValue(viewItem.patientId || null)}
-                </div>
-              </div>
-
-              <div style={modalInner}>
-                <div style={card}>
-                  <div style={label}>Procedure</div>
-                  <div style={value}>{viewItem.procedure || "—"}</div>
-
-                  <div style={label}>Date</div>
-                  <div style={value}>{toDateObj(viewItem)?.toLocaleDateString() || "—"}</div>
-
-                  <div style={label}>Result PDF</div>
-                  <div style={value}>
-                    {viewItem.resultPdfUrl ? (
-                      <a href={viewItem.resultPdfUrl} target="_blank" rel="noreferrer" style={linkBtn}>
-                        Open PDF
-                      </a>
-                    ) : (
-                      "—"
-                    )}
-                  </div>
-
-                  <div style={label}>Notes</div>
-                  <div style={value}>{viewItem.resultNotes ? String(viewItem.resultNotes) : "—"}</div>
-
-                  <div style={label}>Diagnostic Images</div>
-                  {Array.isArray(viewItem.diagnosticImages) && viewItem.diagnosticImages.length ? (
-                    <div style={imgGrid}>
-                      {viewItem.diagnosticImages.slice(0, 9).map((img, idx) => {
-                        const url = typeof img === "string" ? img : img?.url || img?.secureUrl || img?.path || "";
-                        return (
-                          <div key={idx} style={imgCard}>
-                            {url ? (
-                              <img src={url} alt={`Diagnostic ${idx + 1}`} style={imgEl} />
-                            ) : (
-                              <div style={{ padding: 10 }}>No URL</div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={value}>—</div>
-                  )}
-
-                  <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
-                    <button type="button" style={closeBtn} onClick={closeView}>
-                      Close
-                    </button>
-                  </div>
+                  })}
                 </div>
               </div>
             </div>
           </div>
         ) : null}
 
+        {/* DIAGNOSTIC RECORD MODAL (existing, last design) */}
+        {viewOpen && viewItem
+          ? (() => {
+              const patient = viewItem.patientId || null;
+
+              const name = getPatientNameValue(patient);
+              const pid = getPatientIdValue(patient);
+
+              const dob = getPatientDobObj(patient);
+              const age = calcAge(dob);
+              const dobText = dob ? dob.toLocaleDateString() : "";
+
+              const apptDate = toDateObj(viewItem)?.toLocaleDateString() || "—";
+              const proc = viewItem.procedure || "—";
+
+              const imgUrl = getFirstDiagnosticUrl(viewItem);
+              const pdfUrl = viewItem.resultPdfUrl || "";
+
+              const canShowImg = !!imgUrl && !isPdfUrl(imgUrl);
+              const canShowPdf = !canShowImg && !!pdfUrl;
+
+              const fullTarget = imgUrl || pdfUrl;
+
+              const onViewFull = () => {
+                if (fullTarget) openReceiptInNewTab(fullTarget);
+              };
+
+              const onPrint = () => {
+                const target = pdfUrl || imgUrl;
+                if (target) {
+                  openReceiptInNewTab(target);
+                  return;
+                }
+                window.print();
+              };
+
+              return (
+                <div style={overlayView} onClick={closeView} role="dialog" aria-modal="true" aria-label="View record">
+                  <div style={viewBorder} onClick={(e) => e.stopPropagation()}>
+                    <div style={viewModal}>
+                      <div style={viewTop}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={viewName}>{name}</div>
+
+                          <div style={viewMetaRow}>
+                            <div style={viewMeta}>
+                              <div style={viewMetaLabel}>Patient ID</div>
+                              <div style={viewMetaValue}>{pid}</div>
+                            </div>
+
+                            {dob ? (
+                              <div style={viewMeta}>
+                                <div style={viewMetaLabel}>Birthdate</div>
+                                <div style={viewMetaValue}>
+                                  {dobText}
+                                  {Number.isFinite(age) ? ` • ${age} years old` : ""}
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <div style={viewMeta}>
+                              <div style={viewMetaLabel}>Date</div>
+                              <div style={viewMetaValue}>{apptDate}</div>
+                            </div>
+
+                            <div style={viewMeta}>
+                              <div style={viewMetaLabel}>Procedure</div>
+                              <div style={viewMetaValue}>{proc}</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button type="button" style={viewCloseBtn} onClick={closeView} aria-label="Close">
+                          ✕
+                        </button>
+                      </div>
+
+                      <div style={viewBody}>
+                        <div style={viewLeft}>
+                          <div style={viewSectionTitle}>Interpretation and Diagnosis</div>
+
+                          <div style={viewLinedBox}>{viewItem.resultNotes ? String(viewItem.resultNotes) : "—"}</div>
+
+                          <div style={viewBtnRow}>
+                            <button type="button" style={viewActionBtn} onClick={onPrint}>
+                              <PrinterIcon size={18} />
+                              Print Results
+                            </button>
+
+                            <button type="button" style={viewActionBtn} onClick={onViewFull} disabled={!fullTarget}>
+                              View Full Image
+                            </button>
+                          </div>
+                        </div>
+
+                        <div style={viewRight}>
+                          <div style={viewImageFrame}>
+                            {canShowImg ? (
+                              <img src={imgUrl} alt="Diagnostic" style={viewPreviewImg} />
+                            ) : canShowPdf ? (
+                              <iframe src={pdfUrl} title="Result PDF" style={viewPreviewFrame} />
+                            ) : (
+                              <div style={viewEmpty}>No image/PDF available</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
+          : null}
+
         {/* RECEIPT MODAL */}
         {receiptOpen && receiptUrlView ? (
-          <div style={overlay} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
+          <div style={overlayReceipt} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
             <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
               <div style={modalHeader}>
                 <h2 style={modalTitle}>Receipt</h2>

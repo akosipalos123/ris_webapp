@@ -12,6 +12,8 @@ export const XRAY_BILLING_ITEMS = [
   { code: "SHOULDER_GIRDLE", label: "Shoulder Girdle", fee: 240.0 },
   { code: "THORACIC_CAGE", label: "Thoracic Cage", fee: 200.0 },
   { code: "ABDOMEN", label: "Abdomen", fee: 380.0 },
+  // ✅ NEW (Coming Soon)
+  { code: "ULTRASOUND", label: "Ultrasound", fee: 0.0 },
 ];
 
 export const XRAY_PROCEDURE_LABELS = XRAY_BILLING_ITEMS.map((x) => x.label);

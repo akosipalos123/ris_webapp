@@ -1,6 +1,6 @@
 // frontend/src/pages/MyBills.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet } from "../api";
+import { apiGet, apiUpload } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -94,10 +94,10 @@ function getBillStatus(b) {
   const hasReceipt = Boolean(getReceiptRaw(b));
   const lower = raw.toLowerCase();
 
-  if (!raw) return hasReceipt ? "Paid" : "Unpaid";
+  if (!raw) return hasReceipt ? "For Confirmation" : "Unpaid";
 
-  if (lower === "pending") return hasReceipt ? "Paid" : "Unpaid";
-  if (lower === "unpaid") return hasReceipt ? "Paid" : "Unpaid";
+  if (lower === "pending") return hasReceipt ? "For Confirmation" : "Unpaid";
+  if (lower === "unpaid") return hasReceipt ? "For Confirmation" : "Unpaid";
 
   return raw;
 }
@@ -277,6 +277,9 @@ export default function MyBills() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [selectedBill, setSelectedBill] = useState(null);
 
+  // ✅ uploading state per billId (same pattern as AdminDataRecords)
+  const [uploading, setUploading] = useState({});
+
   async function loadAll() {
     const token = localStorage.getItem("token");
     if (!token) return nav("/login");
@@ -396,6 +399,51 @@ export default function MyBills() {
   function closeReceipt() {
     setReceiptOpen(false);
     setSelectedBill(null);
+  }
+
+  // ✅ Patient upload receipt (A: only sets receiptUrl)
+  async function uploadReceiptForBill(billId, file) {
+    const token = localStorage.getItem("token");
+    if (!token) return nav("/login");
+    if (!billId || !file) return;
+
+    // client-side validation (matches backend)
+    const okTypes = ["application/pdf", "image/png", "image/jpeg", "image/webp"];
+    if (!okTypes.includes(file.type)) {
+      setMsg("Receipt must be PDF or image (PNG/JPG/WebP).");
+      return;
+    }
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setMsg("Receipt file is too large (max 10MB).");
+      return;
+    }
+
+    try {
+      setMsg("");
+      setUploading((p) => ({ ...p, [billId]: true }));
+
+      const fd = new FormData();
+      fd.append("billId", billId);
+      fd.append("receipt", file);
+
+      // ✅ NEW backend endpoint (patient auth)
+      const updated = await apiUpload("/api/upload/bill-receipt", token, fd);
+
+      // update bills list (so button flips to "View Receipt")
+      setBills((prev) =>
+        prev.map((b) => (String(b?._id) === String(billId) ? { ...b, ...(updated || {}) } : b))
+      );
+
+      // update selectedBill if it’s open (optional but safe)
+      setSelectedBill((prev) =>
+        prev && String(prev?._id) === String(billId) ? { ...prev, ...(updated || {}) } : prev
+      );
+    } catch (err) {
+      setMsg(err.message || "Upload receipt failed");
+    } finally {
+      setUploading((p) => ({ ...p, [billId]: false }));
+    }
   }
 
   const patientIdShort = useMemo(() => {
@@ -568,7 +616,7 @@ export default function MyBills() {
     const statusPillMobile = (statusRaw) => {
       const s = String(statusRaw || "").toLowerCase();
       const isPaid = s === "paid";
-      const isPending = s === "pending" || s === "unpaid"; // ✅ FIX
+      const isPending = s === "pending" || s === "unpaid";
       const isVoided = s === "voided";
 
       const bg = isPaid ? "#dcfce7" : isVoided ? "#e5e7eb" : isPending ? "#fee2e2" : "#fffbeb";
@@ -827,6 +875,8 @@ export default function MyBills() {
                       const billText = money(getBillAmount(b));
                       const statusText = getBillStatus(b);
                       const receiptExists = !!getReceiptRaw(b);
+                      const isUploading = !!uploading?.[b._id];
+                      const inputId = `bill_receipt_${b._id}`;
 
                       return (
                         <div key={b._id} style={billCard}>
@@ -838,8 +888,39 @@ export default function MyBills() {
                           <div style={{ fontWeight: 900, color: "#0f172a" }}>{procedureText}</div>
                           <div style={{ fontWeight: 900, color: DARK }}>{billText}</div>
 
-                          <button type="button" className="btnPrimary" onClick={() => openReceipt(b)} style={{ width: "100%" }}>
-                            {receiptExists ? "View Receipt" : "View Details"}
+                          {/* hidden file input */}
+                          <input
+                            id={inputId}
+                            type="file"
+                            accept="application/pdf,image/png,image/jpeg,image/webp"
+                            style={{ display: "none" }}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0] || null;
+                              e.target.value = "";
+                              if (!f) return;
+                              uploadReceiptForBill(b._id, f);
+                            }}
+                          />
+
+                          <button
+                            type="button"
+                            className="btnPrimary"
+                            disabled={isUploading}
+                            onClick={() => {
+                              if (receiptExists) {
+                                openReceipt(b);
+                                return;
+                              }
+                              const el = document.getElementById(inputId);
+                              if (el) el.click();
+                            }}
+                            style={{
+                              width: "100%",
+                              opacity: isUploading ? 0.7 : 1,
+                              cursor: isUploading ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {receiptExists ? "View Receipt" : isUploading ? "Uploading..." : "Upload Receipt"}
                           </button>
                         </div>
                       );
@@ -1200,8 +1281,8 @@ export default function MyBills() {
 
   const statusPill = (statusRaw) => {
     const s = String(statusRaw || "").toLowerCase();
-    const isPaid = s === "paid";
-    const isPending = s === "pending" || s === "unpaid"; // ✅ FIX
+    const isPaid = s === "for confirmation";
+    const isPending = s === "pending" || s === "unpaid";
     const isVoided = s === "voided";
     const c = isPaid ? "#0b6b2f" : isVoided ? "#6b7280" : isPending ? "#b91c1c" : DARK;
 
@@ -1471,6 +1552,8 @@ export default function MyBills() {
                   const billText = money(getBillAmount(b));
                   const statusText = getBillStatus(b);
                   const receiptExists = !!getReceiptRaw(b);
+                  const isUploading = !!uploading?.[b._id];
+                  const inputId = `bill_receipt_${b._id}`;
 
                   return (
                     <div key={b._id} style={row}>
@@ -1480,9 +1563,36 @@ export default function MyBills() {
                       <div>
                         <span style={statusPill(statusText)}>{statusText}</span>
                       </div>
+
+                      {/* hidden file input */}
+                      <input
+                        id={inputId}
+                        type="file"
+                        accept="application/pdf,image/png,image/jpeg,image/webp"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          e.target.value = "";
+                          if (!f) return;
+                          uploadReceiptForBill(b._id, f);
+                        }}
+                      />
+
                       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                        <button type="button" style={receiptBtn(false)} onClick={() => openReceipt(b)}>
-                          {receiptExists ? "View Receipt" : "View Details"}
+                        <button
+                          type="button"
+                          style={receiptBtn(isUploading)}
+                          disabled={isUploading}
+                          onClick={() => {
+                            if (receiptExists) {
+                              openReceipt(b);
+                              return;
+                            }
+                            const el = document.getElementById(inputId);
+                            if (el) el.click();
+                          }}
+                        >
+                          {receiptExists ? "View Receipt" : isUploading ? "Uploading..." : "Upload Receipt"}
                         </button>
                       </div>
                     </div>

@@ -142,7 +142,7 @@ export default function AdminAppointments() {
   const [savingId, setSavingId] = useState(null);
 
   const [filters, setFilters] = useState({
-    status: "Pending",
+    status: "All",
     procedure: "All",
     date: "",
   });

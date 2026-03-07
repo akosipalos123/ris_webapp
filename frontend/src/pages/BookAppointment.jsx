@@ -211,6 +211,17 @@ function monthStart(d) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
+// ✅ normalize procedure string for "same procedure" checks (frontend)
+function normalizeProcedureKeyFront(input) {
+  return String(input || "")
+    .normalize("NFKC")
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 /* ---------- ACTIVE MINI CALENDAR (click to select dates) ---------- */
 function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
   const min = minIso || "1900-01-01";
@@ -231,10 +242,7 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valueIso]);
 
-  const label = useMemo(
-    () => view.toLocaleString(undefined, { month: "long", year: "numeric" }),
-    [view]
-  );
+  const label = useMemo(() => view.toLocaleString(undefined, { month: "long", year: "numeric" }), [view]);
 
   const prevDisabled = useMemo(() => {
     const prevMonthEnd = new Date(view.getFullYear(), view.getMonth(), 0);
@@ -359,6 +367,58 @@ function ActiveCalendar({ valueIso, onChangeIso, minIso, accent = "#0b3d2e" }) {
   );
 }
 
+/* ---------- COMING SOON MODAL (Ultrasound block) ---------- */
+function ComingSoonModal({ open, onClose, message = "Coming Soon...", accent = "#0b3d2e" }) {
+  if (!open) return null;
+
+  const overlay = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,.55)",
+    zIndex: 5000,
+    display: "grid",
+    placeItems: "center",
+    padding: 16,
+  };
+
+  const modal = {
+    width: "min(420px, 92vw)",
+    background: "#fff",
+    borderRadius: 16,
+    padding: 18,
+    border: `2px solid ${accent}`,
+    boxShadow: "0 26px 70px rgba(0,0,0,.45)",
+    textAlign: "center",
+  };
+
+  const title = { fontWeight: 900, fontSize: 18, color: "#0f172a" };
+  const text = { marginTop: 10, fontWeight: 800, color: "#334155" };
+
+  const btn = {
+    marginTop: 16,
+    padding: "10px 14px",
+    borderRadius: 999,
+    background: accent,
+    color: "#fff",
+    fontWeight: 900,
+    border: `2px solid ${accent}`,
+    cursor: "pointer",
+    width: "100%",
+  };
+
+  return (
+    <div style={overlay} onClick={onClose} role="dialog" aria-modal="true" aria-label="Notice">
+      <div style={modal} onClick={(e) => e.stopPropagation()}>
+        <div style={title}>Notice</div>
+        <div style={text}>{message}</div>
+        <button type="button" style={btn} onClick={onClose}>
+          OK
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function BookAppointment() {
   const nav = useNavigate();
   const loc = useLocation();
@@ -407,15 +467,19 @@ export default function BookAppointment() {
   const [slipFile, setSlipFile] = useState(null);
   const slipInputRef = useRef(null);
 
+  // ✅ Ultrasound "Coming Soon" modal state + last procedure memory
+  const [soonOpen, setSoonOpen] = useState(false);
+  const lastProcedureRef = useRef("");
+
+  // ✅ If user uploaded a slip and didn't select a procedure, use a safe fallback.
+  const procedureForBooking = useMemo(() => {
+    const p = String(form.procedure || "").trim();
+    if (p) return p;
+    return slipFile ? "X-Ray" : "";
+  }, [form.procedure, slipFile]);
+
   // ✅ local-safe today ISO (avoid off-by-one in some timezones)
   const todayIso = toLocalISODate(new Date());
-
-  // ✅ Availability should still work even if procedure is not selected but slip is uploaded
-  const procedureForAvailability = useMemo(() => {
-    if (form.procedure) return form.procedure;
-    if (slipFile) return "X-Ray"; // fallback label used for slot checking when slip is provided
-    return "";
-  }, [form.procedure, slipFile]);
 
   async function loadAll() {
     const token = localStorage.getItem("token");
@@ -520,6 +584,8 @@ export default function BookAppointment() {
     setForm({ procedure: "", date: "" });
     setSlipFile(null);
     setAvailability(null);
+    lastProcedureRef.current = ""; // ✅ reset previous selection
+    setSoonOpen(false);
     setBookOpen(true);
   }
 
@@ -529,10 +595,26 @@ export default function BookAppointment() {
     setUploadingSlip(false);
     setCheckingAvail(false);
     setAvailability(null);
+    setSoonOpen(false);
   }
 
   function onBookChange(e) {
     const { name, value } = e.target;
+
+    if (name === "procedure") {
+      // ✅ ignore our internal heading options if they ever get focused somehow
+      if (String(value || "") === "__HDR__") return;
+
+      if (value === "Ultrasound") {
+        setSoonOpen(true);
+        // revert to the last selected (non-ultrasound) value
+        setForm((p) => ({ ...p, procedure: lastProcedureRef.current || "" }));
+        setMsg("");
+        return;
+      }
+      lastProcedureRef.current = value;
+    }
+
     setForm((p) => ({ ...p, [name]: value }));
     setMsg("");
   }
@@ -542,33 +624,56 @@ export default function BookAppointment() {
     const token = localStorage.getItem("token");
     if (!token || !bookOpen) return;
 
-    if (!procedureForAvailability || !form.date) {
+    if (!procedureForBooking || !form.date) {
       setAvailability(null);
       return;
     }
 
-    const q = `?procedure=${encodeURIComponent(procedureForAvailability)}&date=${encodeURIComponent(form.date)}`;
+    const q = `?procedure=${encodeURIComponent(procedureForBooking)}&date=${encodeURIComponent(form.date)}`;
     setCheckingAvail(true);
 
     apiGet(`/api/appointments/availability${q}`, token)
       .then((data) => setAvailability(data))
       .catch(() => setAvailability(null))
       .finally(() => setCheckingAvail(false));
-  }, [bookOpen, procedureForAvailability, form.date]);
+  }, [bookOpen, procedureForBooking, form.date]);
 
-  // ✅ ONE ACTIVE APPOINTMENT RULE (Pending/Approved blocks new booking)
-  const activeAppointment = useMemo(() => {
-    return (
-      (appointments || []).find((a) => {
-        const s = String(a?.status || "");
-        return s === "Pending" || s === "Approved";
-      }) || null
-    );
-  }, [appointments]);
+  // ✅ booking constraint: max 3 active (Pending/Approved), all must be different procedures
+  const activeStatuses = useMemo(() => new Set(["Pending", "Approved"]), []);
 
-  const hasActiveAppointment = !!activeAppointment;
+  const activeAppointments = useMemo(() => {
+    return appointments.filter((a) => activeStatuses.has(String(a?.status || "")));
+  }, [appointments, activeStatuses]);
 
-  const noSlots = availability && typeof availability.remaining === "number" && availability.remaining <= 0;
+  const maxActiveReached = activeAppointments.length >= 3;
+
+  const activeProcedureKeys = useMemo(() => {
+    const s = new Set();
+    for (const a of activeAppointments) {
+      s.add(normalizeProcedureKeyFront(a?.procedure));
+    }
+    return s;
+  }, [activeAppointments]);
+
+  const hasActiveSameProcedure =
+    !!procedureForBooking && activeProcedureKeys.has(normalizeProcedureKeyFront(procedureForBooking));
+
+  const hasActiveAppointment = maxActiveReached || hasActiveSameProcedure;
+
+  // ✅ UNLIMITED SLOTS SUPPORT
+  const unlimitedSlots =
+    !!availability &&
+    (availability.unlimited === true ||
+      availability.limit == null ||
+      Number(availability.limit) <= 0 ||
+      availability.remaining == null);
+
+  const noSlots =
+    !unlimitedSlots &&
+    availability &&
+    typeof availability.remaining === "number" &&
+    availability.remaining <= 0;
+
   const submitDisabled = saving || uploadingSlip || checkingAvail || noSlots || hasActiveAppointment;
 
   async function uploadRequestSlip(token, appointmentId, file) {
@@ -596,20 +701,20 @@ export default function BookAppointment() {
       setSaving(true);
       setMsg("");
 
-      // ✅ Procedure is optional ONLY if slipFile exists
-      if (!form.procedure && !slipFile) return setMsg("Please select a procedure or upload a request slip.");
+      if (!procedureForBooking) return setMsg("Please select a procedure or upload a request slip.");
       if (!form.date) return setMsg("Please select a date.");
 
-      // ✅ Block booking if ANY active appointment exists (Pending/Approved)
-      if (hasActiveAppointment) {
-        const dtExisting = toDateObj(activeAppointment);
-        const dateExisting = dtExisting ? dtExisting.toLocaleDateString() : "-";
-        const procExisting = activeAppointment?.procedure || "—";
-        const statusExisting = activeAppointment?.status || "—";
-
+      if (maxActiveReached) {
         return setMsg(
-          `You already have an active appointment (${statusExisting}) for "${procExisting}" on ${dateExisting}. ` +
-            `Please cancel it or wait until it is Completed, Cancelled, or Rejected before booking again.`
+          "You already have 3 active appointments (Pending/Approved). " +
+            "You can submit again only after one becomes Cancelled, Rejected, or Completed."
+        );
+      }
+
+      if (hasActiveSameProcedure) {
+        return setMsg(
+          `You already have an active ${procedureForBooking} appointment (Pending/Approved). ` +
+            "Please choose a different procedure or wait until it is Cancelled, Rejected, or Completed."
         );
       }
 
@@ -626,11 +731,8 @@ export default function BookAppointment() {
         if (slipFile.size > maxBytes) return setMsg("Request slip file is too large (max 10MB).");
       }
 
-      // ✅ If procedure not selected but slip exists, save a safe fallback label
-      const procedureToSave = form.procedure || "X-Ray";
-
       const [y, m, d] = form.date.split("-").map(Number);
-      const payload = { procedure: procedureToSave, year: y, month: m, day: d };
+      const payload = { procedure: procedureForBooking, year: y, month: m, day: d };
 
       const created = await apiPost("/api/appointments", payload, token);
 
@@ -688,6 +790,23 @@ export default function BookAppointment() {
     for (const a of appointments) if (a?.procedure) s.add(a.procedure);
     return ["All", ...Array.from(s)];
   }, [appointments]);
+
+  // ✅ Grouping for booking dropdown
+  const procedureGroups = useMemo(() => {
+    const items = Array.isArray(XRAY_PROCEDURE_ITEMS) ? XRAY_PROCEDURE_ITEMS : [];
+
+    const ultrasound = items.filter(
+      (x) => String(x.code) === "ULTRASOUND" || String(x.label) === "Ultrasound"
+    );
+
+    const chest = items.filter((x) => String(x.code).startsWith("CHEST_"));
+
+    const others = items.filter(
+      (x) => !String(x.code).startsWith("CHEST_") && String(x.code) !== "ULTRASOUND"
+    );
+
+    return { chest, others, ultrasound };
+  }, [XRAY_PROCEDURE_ITEMS]);
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((a) => {
@@ -972,7 +1091,13 @@ export default function BookAppointment() {
               <div className="brandText">AXIS</div>
             </div>
 
-            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
+            <button
+              type="button"
+              className="headerBtn"
+              onClick={() => setDrawerOpen(false)}
+              aria-label="Close menu"
+              title="Close"
+            >
               ✕
             </button>
           </div>
@@ -1245,29 +1370,41 @@ export default function BookAppointment() {
                         <div style={fieldLabel}>Procedure</div>
 
                         <div style={procWrap}>
-                          <select
-                            name="procedure"
-                            value={form.procedure}
-                            onChange={onBookChange}
-                            style={select}
-                            required={!slipFile} // ✅ only required when no slip
-                          >
+                          <select name="procedure" value={form.procedure} onChange={onBookChange} style={select} required={!slipFile}>
                             <option value="">Type of Procedure</option>
-                            {XRAY_PROCEDURE_ITEMS.map((x) => (
-                              <option key={x.code} value={x.label}>
-                                {x.label} — {formatPhp(x.fee)}
+
+                            <optgroup label="XRAY Procedures:">
+                              <option value="__HDR__" disabled>
+                                — Chest —
                               </option>
-                            ))}
+                              {procedureGroups.chest.map((x) => (
+                                <option key={x.code} value={x.label}>
+                                  {x.label} — {formatPhp(x.fee)}
+                                </option>
+                              ))}
+
+                              <option value="__HDR__" disabled>
+                                — Others —
+                              </option>
+                              {procedureGroups.others.map((x) => (
+                                <option key={x.code} value={x.label}>
+                                  {x.label} — {formatPhp(x.fee)}
+                                </option>
+                              ))}
+                            </optgroup>
+
+                            <optgroup label="Ultrasound Procedures:">
+                              {procedureGroups.ultrasound.map((x) => (
+                                <option key={x.code} value={x.label}>
+                                  {x.label} — {formatPhp(x.fee)}
+                                </option>
+                              ))}
+                            </optgroup>
                           </select>
 
                           <div style={orText}>or</div>
 
-                          <button
-                            type="button"
-                            style={uploadBtn}
-                            onClick={() => slipInputRef.current?.click()}
-                            title="Upload request slip (optional)"
-                          >
+                          <button type="button" style={uploadBtn} onClick={() => slipInputRef.current?.click()} title="Upload request slip (optional)">
                             Upload Request Slip
                           </button>
 
@@ -1323,22 +1460,24 @@ export default function BookAppointment() {
                           </div>
                         </div>
 
-                        {!procedureForAvailability || !form.date ? (
-                          <div style={hintLine("muted")}>Select a date (and optionally a procedure) to see availability.</div>
+                        {!procedureForBooking || !form.date ? (
+                          <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
                         ) : checkingAvail ? (
                           <div style={hintLine("muted")}>Checking availability...</div>
                         ) : availability ? (
                           <div style={hintLine(noSlots ? "bad" : "good")}>
-                            Remaining slots: {availability.remaining} ({availability.used}/{availability.limit} used)
+                            {unlimitedSlots
+                              ? `Remaining slots: Unlimited (used: ${typeof availability.used === "number" ? availability.used : 0})`
+                              : `Remaining slots: ${availability.remaining} (${availability.used}/${availability.limit} used)`}
                           </div>
                         ) : (
                           <div style={hintLine("muted")}>Availability unavailable.</div>
                         )}
 
-                        {hasActiveAppointment ? (
-                          <div style={hintLine("bad")}>
-                            You already have an active appointment. Please cancel/complete it before booking again.
-                          </div>
+                        {maxActiveReached ? (
+                          <div style={hintLine("bad")}>You already have 3 active appointments (Pending/Approved).</div>
+                        ) : hasActiveSameProcedure ? (
+                          <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div>
                         ) : null}
                       </div>
                     </div>
@@ -1353,16 +1492,13 @@ export default function BookAppointment() {
           ) : null}
 
           <style>{`
-            /* placeholder color in modal */
             .syn-input::placeholder { color: rgba(255,255,255,.65); }
-
-            /* dropdown option font color (Windows/Chrome) */
-            .syn-procedure-select option {
-              color: #0f172a;
-              background: #ffffff;
-            }
+            .syn-procedure-select option { color: #0f172a; background: #ffffff; }
           `}</style>
         </main>
+
+        {/* ✅ Coming Soon modal */}
+        <ComingSoonModal open={soonOpen} onClose={() => setSoonOpen(false)} accent={DARK} message="Coming Soon..." />
       </div>
     );
   }
@@ -1640,13 +1776,7 @@ export default function BookAppointment() {
     overflow: "hidden",
   };
 
-  const apptPanel = {
-    ...panel,
-    minHeight: 520,
-    display: "flex",
-    flexDirection: "column",
-    marginTop: 14,
-  };
+  const apptPanel = { ...panel, minHeight: 520, display: "flex", flexDirection: "column", marginTop: 14 };
 
   const apptPanelTop = { display: "flex", justifyContent: "flex-end", padding: "4px 8px 10px", flex: "0 0 auto" };
 
@@ -2127,25 +2257,43 @@ export default function BookAppointment() {
                               value={form.procedure}
                               onChange={onBookChange}
                               style={select}
-                              required={!slipFile} // ✅ only required when no slip
+                              required={!slipFile}
                             >
                               <option value="">Type of Procedure</option>
-                              {XRAY_PROCEDURE_ITEMS.map((x) => (
-                                <option key={x.code} value={x.label}>
-                                  {x.label} — {formatPhp(x.fee)}
+
+                              <optgroup label="XRAY Procedures:">
+                                <option value="__HDR__" disabled>
+                                  — Chest —
                                 </option>
-                              ))}
+                                {procedureGroups.chest.map((x) => (
+                                  <option key={x.code} value={x.label}>
+                                    {x.label} — {formatPhp(x.fee)}
+                                  </option>
+                                ))}
+
+                                <option value="__HDR__" disabled>
+                                  — Others —
+                                </option>
+                                {procedureGroups.others.map((x) => (
+                                  <option key={x.code} value={x.label}>
+                                    {x.label} — {formatPhp(x.fee)}
+                                  </option>
+                                ))}
+                              </optgroup>
+
+                              <optgroup label="Ultrasound Procedures:">
+                                {procedureGroups.ultrasound.map((x) => (
+                                  <option key={x.code} value={x.label}>
+                                    {x.label} — {formatPhp(x.fee)}
+                                  </option>
+                                ))}
+                              </optgroup>
                             </select>
                           </div>
 
                           <div style={orText}>or</div>
 
-                          <button
-                            type="button"
-                            style={uploadBtn}
-                            onClick={() => slipInputRef.current?.click()}
-                            title="Upload request slip (optional)"
-                          >
+                          <button type="button" style={uploadBtn} onClick={() => slipInputRef.current?.click()} title="Upload request slip (optional)">
                             Upload Request Slip
                           </button>
 
@@ -2166,7 +2314,7 @@ export default function BookAppointment() {
                       </div>
                     </div>
 
-                    {/* RIGHT COLUMN (Date & Time) */}
+                    {/* RIGHT COLUMN */}
                     <div style={rightCard}>
                       <div style={fieldLabel}>Date and Time of Appointment</div>
 
@@ -2202,22 +2350,24 @@ export default function BookAppointment() {
                         </div>
                       </div>
 
-                      {!procedureForAvailability || !form.date ? (
-                        <div style={hintLine("muted")}>Select a date (and optionally a procedure) to see availability.</div>
+                      {!procedureForBooking || !form.date ? (
+                        <div style={hintLine("muted")}>Select a procedure and date to see availability.</div>
                       ) : checkingAvail ? (
                         <div style={hintLine("muted")}>Checking availability...</div>
                       ) : availability ? (
                         <div style={hintLine(noSlots ? "bad" : "good")}>
-                          Remaining slots: {availability.remaining} ({availability.used}/{availability.limit} used)
+                          {unlimitedSlots
+                            ? `Remaining slots: Unlimited (used: ${typeof availability.used === "number" ? availability.used : 0})`
+                            : `Remaining slots: ${availability.remaining} (${availability.used}/${availability.limit} used)`}
                         </div>
                       ) : (
                         <div style={hintLine("muted")}>Availability unavailable.</div>
                       )}
 
-                      {hasActiveAppointment ? (
-                        <div style={hintLine("bad")}>
-                          You already have an active appointment. Please cancel/complete it before booking again.
-                        </div>
+                      {maxActiveReached ? (
+                        <div style={hintLine("bad")}>You already have 3 active appointments (Pending/Approved).</div>
+                      ) : hasActiveSameProcedure ? (
+                        <div style={hintLine("bad")}>You already have an active appointment for this procedure.</div>
                       ) : null}
                     </div>
                   </div>
@@ -2233,16 +2383,35 @@ export default function BookAppointment() {
           </div>
         ) : null}
 
+
         <style>{`
           .syn-input::placeholder { color: rgba(255,255,255,.65); }
 
-          /* ✅ Fix dropdown option font color (Windows/Chrome) */
+          /* regular options */
           .syn-procedure-select option {
             color: #0f172a;
             background: #ffffff;
+            font-weight: 800;
+          }
+
+          /* optgroup labels: "XRAY Procedures:" / "Ultrasound Procedures:" */
+          .syn-procedure-select optgroup {
+            color: #0f172a;
+            font-weight: 900;
+          }
+
+          /* disabled headings: "— Chest —" / "— Others —" */
+          .syn-procedure-select option[disabled] {
+            color: #0f172a !important;
+            -webkit-text-fill-color: #0f172a; /* helps Chrome */
+            font-weight: 900;
+            opacity: 1;
           }
         `}</style>
       </main>
+
+      {/* ✅ Coming Soon modal */}
+      <ComingSoonModal open={soonOpen} onClose={() => setSoonOpen(false)} accent={DARK} message="Coming Soon..." />
     </div>
   );
 }

@@ -334,13 +334,22 @@ export default function AdminDataRecords() {
       setLoading(true);
       setMsg("");
 
-      // Keep your current behavior (Completed)
-      const data = await apiGet("/api/admin/appointments?status=Completed", authToken);
+      // ✅ Include BOTH Completed + Approved
+      const [completedRes, approvedRes] = await Promise.all([
+        apiGet("/api/admin/appointments?status=Completed", authToken),
+        apiGet("/api/admin/appointments?status=Approved", authToken),
+      ]);
 
-      const list = Array.isArray(data) ? data : [];
-      setRows(list);
+      const completed = Array.isArray(completedRes) ? completedRes : [];
+      const approved = Array.isArray(approvedRes) ? approvedRes : [];
 
-      await loadBillMetaFor(list);
+      // merge + dedupe by _id (just in case)
+      const merged = [...completed, ...approved];
+      const deduped = Array.from(new Map(merged.map((a) => [a?._id, a])).values()).filter(Boolean);
+
+      setRows(deduped);
+
+      await loadBillMetaFor(deduped);
     } catch (err) {
       setMsg(err.message || "Failed to load data records");
       setRows([]);

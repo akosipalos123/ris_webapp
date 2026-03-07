@@ -90,6 +90,14 @@ const BrandIcon = (p) => (
   </Icon>
 );
 
+const PrintIcon = (p) => (
+  <Icon {...p}>
+    <path d="M6 9V3h12v6" />
+    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+    <path d="M6 14h12v7H6z" />
+  </Icon>
+);
+
 /* ---------- HELPERS ---------- */
 function apptToYMD(a) {
   if (a?.year && a?.month && a?.day) {
@@ -113,6 +121,35 @@ function formatMDY(a) {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return "-";
   return `${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/${y}`;
+}
+
+function formatISOToMDY(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${mm}/${dd}/${yyyy}`;
+}
+
+function ageFromBirthdate(birthdate) {
+  if (!birthdate) return "";
+  const b = new Date(birthdate);
+  if (Number.isNaN(b.getTime())) return "";
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--;
+  return String(age);
+}
+
+function sexShort(gender) {
+  const g = String(gender || "").trim().toLowerCase();
+  if (!g) return "—";
+  if (g.startsWith("m")) return "M";
+  if (g.startsWith("f")) return "F";
+  return g.toUpperCase();
 }
 
 function useMediaQuery(query) {
@@ -301,6 +338,20 @@ export default function DiagnosticResults() {
     return `${base}${profile.suffix ? `, ${profile.suffix}` : ""}`;
   }, [profile]);
 
+  const patientBirth = useMemo(() => formatISOToMDY(profile?.birthdate), [profile?.birthdate]);
+
+  const patientAgeText = useMemo(() => {
+    const a = ageFromBirthdate(profile?.birthdate);
+    return a ? `${a} years old` : "—";
+  }, [profile?.birthdate]);
+
+  const patientContact = useMemo(() => {
+    const v = profile?.contactNumber || profile?.phone || "";
+    return String(v || "—");
+  }, [profile]);
+
+  const patientSex = useMemo(() => sexShort(profile?.gender || profile?.sex), [profile]);
+
   const statusOptions = useMemo(() => {
     const s = new Set();
     for (const a of appointments) if (a?.status) s.add(a.status);
@@ -333,9 +384,47 @@ export default function DiagnosticResults() {
     return normalizeFileUrl(raw);
   }, [selected]);
 
-  const pdfIsPdf = useMemo(() => {
-    return !!pdfUrl && pdfUrl.toLowerCase().includes(".pdf");
-  }, [pdfUrl]);
+  const imageUrl = useMemo(() => {
+    if (!selected) return "";
+    const raw =
+      selected?.diagnosticImages?.[0]?.url ||
+      selected?.resultImageUrl ||
+      selected?.imageUrl ||
+      selected?.resultUrl ||
+      "";
+    return normalizeFileUrl(raw);
+  }, [selected]);
+
+  const previewUrl = useMemo(() => imageUrl || pdfUrl, [imageUrl, pdfUrl]);
+
+  const previewIsPdf = useMemo(() => {
+    return !!previewUrl && previewUrl.toLowerCase().includes(".pdf");
+  }, [previewUrl]);
+
+  const referringPhysician = useMemo(() => {
+    if (!selected) return "—";
+    const v =
+      selected?.referringPhysician ||
+      selected?.referralPhysician ||
+      selected?.referringDoctor ||
+      selected?.requestingPhysician ||
+      selected?.doctor ||
+      selected?.physician ||
+      selected?.requestedBy ||
+      "";
+    return String(v || "").trim() || "—";
+  }, [selected]);
+
+  const interpretationText = useMemo(() => {
+    if (!selected) return "";
+    const v =
+      selected?.interpretation ||
+      selected?.impression ||
+      selected?.findings ||
+      selected?.resultNotes ||
+      "";
+    return String(v || "").trim();
+  }, [selected]);
 
   /* ---------- ROLE (PATIENT vs ADMIN) ---------- */
   const isAdmin = profile?.role === "admin" || profile?.userType === "admin" || profile?.isAdmin === true;
@@ -561,13 +650,7 @@ export default function DiagnosticResults() {
           <header className="topbar">
             <div className="topbarInner">
               <div className="topTitleWrap">
-                <button
-                  type="button"
-                  className="burger"
-                  title="Menu"
-                  onClick={() => setDrawerOpen((v) => !v)}
-                  aria-label="Open menu"
-                >
+                <button type="button" className="burger" title="Menu" onClick={() => setDrawerOpen((v) => !v)} aria-label="Open menu">
                   ☰
                 </button>
 
@@ -624,7 +707,6 @@ export default function DiagnosticResults() {
             <div className="contentInner">
               {msg ? <div className="msgWarn">{msg}</div> : null}
 
-              {/* ✅ keep borders/details on phone: wrap content in .panel */}
               <div className="panel" style={{ marginTop: 12 }}>
                 <div style={mFilters}>
                   <div>
@@ -691,7 +773,7 @@ export default function DiagnosticResults() {
           </div>
         </main>
 
-        {/* ✅ Mobile View Modal (improved) */}
+        {/* Mobile View Modal */}
         {viewOpen ? (
           <div style={mOverlay} onClick={closeViewModal} role="dialog" aria-modal="true" aria-label="Result preview">
             <div style={mModal} onClick={(e) => e.stopPropagation()}>
@@ -721,14 +803,14 @@ export default function DiagnosticResults() {
               <div style={mPreviewWrap}>
                 <div style={{ color: "#fff", fontWeight: 900 }}>Attachment Preview</div>
                 <div style={mPreviewInner}>
-                  {pdfUrl ? (
-                    pdfIsPdf ? (
-                      <iframe title="Result PDF" src={pdfUrl} style={{ width: "100%", height: "100%", border: 0 }} />
+                  {previewUrl ? (
+                    previewIsPdf ? (
+                      <iframe title="Result PDF" src={previewUrl} style={{ width: "100%", height: "100%", border: 0 }} />
                     ) : (
-                      <img src={pdfUrl} alt="Result file" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      <img src={previewUrl} alt="Result file" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                     )
                   ) : (
-                    <div style={{ padding: 18, color: "#64748b", fontWeight: 900 }}>No PDF/attachment available.</div>
+                    <div style={{ padding: 18, color: "#64748b", fontWeight: 900 }}>No attachment available.</div>
                   )}
                 </div>
               </div>
@@ -742,13 +824,13 @@ export default function DiagnosticResults() {
               ) : null}
 
               <div style={mFooter}>
-                {pdfUrl ? (
-                  <a href={pdfUrl} target="_blank" rel="noreferrer" style={mActionBtn("light")}>
-                    Open PDF
+                {previewUrl ? (
+                  <a href={previewUrl} target="_blank" rel="noreferrer" style={mActionBtn("light")}>
+                    View Full File
                   </a>
                 ) : (
                   <button type="button" style={{ ...mActionBtn("light"), opacity: 0.6, cursor: "not-allowed" }} disabled>
-                    Open PDF
+                    View Full File
                   </button>
                 )}
 
@@ -1103,7 +1185,7 @@ export default function DiagnosticResults() {
     color: "#0f172a",
   };
 
-  const viewBtn = {
+  const tableViewBtn = {
     width: 200,
     justifySelf: "end",
     padding: "10px 14px",
@@ -1115,7 +1197,7 @@ export default function DiagnosticResults() {
     cursor: "pointer",
   };
 
-  /* ---------- MODAL ---------- */
+  /* ---------- MODAL (MATCH ATTACHED DESIGN) ---------- */
   const overlay = {
     position: "absolute",
     inset: 0,
@@ -1127,100 +1209,124 @@ export default function DiagnosticResults() {
   };
 
   const modal = {
-    width: "min(980px, 96%)",
-    height: "min(680px, 92vh)",
-    background: `linear-gradient(180deg, ${DARK} 0%, #1c5a41 100%)`,
-    borderRadius: 22,
-    boxShadow: "0 22px 60px rgba(0,0,0,.35)",
-    padding: "18px 18px 14px",
+    width: "min(1400px, 96%)",
+    height: "min(760px, 92vh)",
+    borderRadius: 34,
+    border: `4px solid ${DARK}`,
+    overflow: "hidden",
+    boxShadow: "0 26px 70px rgba(0,0,0,.45)",
+    background: "linear-gradient(180deg, rgba(0,0,0,.38) 0%, rgba(11,61,46,.94) 35%, rgba(47,90,69,.94) 100%)",
     display: "flex",
     flexDirection: "column",
-    gap: 12,
+  };
+
+  const modalHeader = {
+    padding: "18px 22px 14px",
+    background: "rgba(0,0,0,.22)",
+    borderBottom: "2px solid rgba(255,255,255,.10)",
     color: "#fff",
   };
 
-  const modalTitle = { margin: 0, textAlign: "center", fontWeight: 900, fontSize: 32, lineHeight: 1.1 };
-  const modalSub = { textAlign: "center", marginTop: -6, opacity: 0.9, fontWeight: 800, fontSize: 13 };
-
-  const modalBody = { flex: 1, overflow: "auto", padding: "6px 6px 0" };
-
-  const infoGrid = {
+  const headerGrid = {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 12,
-    marginBottom: 12,
+    gridTemplateColumns: "1.1fr 0.9fr",
+    gap: 18,
+    alignItems: "start",
   };
 
-  const infoCard = {
-    border: "2px solid rgba(255,255,255,.22)",
-    borderRadius: 14,
-    padding: "10px 12px",
+  const patientNameStyle = { fontWeight: 900, fontSize: 36, lineHeight: 1.05 };
+  const patientMetaStyle = { fontWeight: 900, fontSize: 16, opacity: 0.95, marginTop: 8, lineHeight: 1.45 };
+
+  const headerRight = { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 };
+
+  const rightMetaBlock = {
+    alignSelf: "stretch",
+    marginTop: 2,
+    display: "grid",
+    gridTemplateColumns: "140px 1fr",
+    columnGap: 18,
+    rowGap: 8,
+    color: "#fff",
+    fontWeight: 900,
+  };
+
+  const rightMetaLabel = { fontSize: 16, opacity: 0.95 };
+  const rightMetaValue = { fontSize: 18 };
+
+  const rightMetaLine = {
+    gridColumn: "1 / -1",
+    fontSize: 18,
+    fontWeight: 900,
+    lineHeight: 1.25,
+  };
+
+  const modalBody = {
+    flex: 1,
+    minHeight: 0,
+    display: "grid",
+    gridTemplateColumns: "0.95fr 1.25fr",
+  };
+
+  const leftPane = {
+    minHeight: 0,
+    padding: "18px 22px 16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
     background: "rgba(255,255,255,.06)",
   };
 
-  const infoLabel = { fontWeight: 900, fontSize: 12, opacity: 0.9 };
-  const infoValue = { fontWeight: 900, fontSize: 16, marginTop: 2 };
+  const sectionTitle = { fontWeight: 900, color: "#fff", fontSize: 24 };
 
-  const notesBox = {
-    border: "2px solid rgba(255,255,255,.22)",
-    borderRadius: 14,
-    padding: "10px 12px",
-    background: "rgba(255,255,255,.06)",
-    lineHeight: 1.5,
+  // ✅ lined “notes” area ONLY (no Date/Procedure headers or row)
+  const notesArea = {
+    flex: 1,
+    minHeight: 0,
+    padding: "8px 2px 0",
+    color: "#fff",
     fontWeight: 800,
     whiteSpace: "pre-wrap",
+    overflow: "auto",
+    lineHeight: 1.55,
+    backgroundImage:
+      "repeating-linear-gradient(to bottom, transparent 0, transparent 30px, rgba(255,255,255,.65) 30px, rgba(255,255,255,.65) 32px)",
   };
 
-  const previewOuter = {
-    marginTop: 12,
-    borderRadius: 14,
-    overflow: "hidden",
-    border: "2px solid rgba(255,255,255,.22)",
-    background: "#fff",
-    height: 340,
-  };
-
-  const modalFooter = {
+  const leftFooter = {
     display: "flex",
-    gap: 10,
-    justifyContent: "flex-end",
-    paddingTop: 6,
-    flexWrap: "wrap",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 14,
+    paddingTop: 14,
   };
 
-  const footerBtn = {
-    padding: "10px 12px",
-    borderRadius: 999,
-    fontWeight: 900,
-    cursor: "pointer",
-    textDecoration: "none",
+  const actionBtn = (disabled = false) => ({
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    whiteSpace: "nowrap",
-  };
-
-  const closeBtn = {
-    ...footerBtn,
-    background: "transparent",
-    border: "2px solid rgba(255,255,255,.75)",
-    color: "#fff",
-  };
-
-  const primaryLinkBtn = {
-    ...footerBtn,
+    gap: 10,
+    padding: "12px 18px",
+    borderRadius: 0,
     background: "#fff",
-    border: "2px solid rgba(255,255,255,.9)",
-    color: "#0f172a",
+    color: DARK,
+    fontWeight: 900,
+    border: "2px solid rgba(0,0,0,.12)",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+    textDecoration: "none",
+    minWidth: 220,
+  });
+
+  const rightPane = {
+    background: "#fff",
+    borderLeft: "2px solid rgba(0,0,0,.18)",
+    display: "grid",
+    placeItems: "center",
+    overflow: "hidden",
   };
 
-  const darkLinkBtn = {
-    ...footerBtn,
-    background: DARK,
-    border: `2px solid ${DARK}`,
-    color: "#fff",
-  };
+  const previewFrame = { width: "100%", height: "100%", border: 0 };
+  const previewImg = { width: "100%", height: "100%", objectFit: "cover" };
 
   return (
     <div style={shell}>
@@ -1382,13 +1488,7 @@ export default function DiagnosticResults() {
                 <div>
                   <div style={filterLabel}>Date</div>
                   <div style={dateWrap}>
-                    <input
-                      type="date"
-                      name="date"
-                      value={filters.date}
-                      onChange={onFilterChange}
-                      style={{ ...filterControl, paddingRight: 44 }}
-                    />
+                    <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={{ ...filterControl, paddingRight: 44 }} />
                     <div style={dateIcon}>📅</div>
                   </div>
                 </div>
@@ -1429,7 +1529,7 @@ export default function DiagnosticResults() {
                       <div>{formatMDY(a)}</div>
                       <div>{a.procedure || "-"}</div>
                       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                        <button type="button" style={viewBtn} onClick={() => openViewModal(a)}>
+                        <button type="button" style={tableViewBtn} onClick={() => openViewModal(a)}>
                           View
                         </button>
                       </div>
@@ -1445,64 +1545,86 @@ export default function DiagnosticResults() {
           </div>
         </div>
 
-        {/* VIEW MODAL */}
+        {/* VIEW MODAL (cleaned: removed Refresh/Reset + removed Date/Procedure list items) */}
         {viewOpen ? (
-          <div style={overlay} onClick={closeViewModal} role="dialog" aria-modal="true" aria-label="Result preview">
+          <div style={overlay} onClick={closeViewModal} role="dialog" aria-modal="true" aria-label="Diagnostic result">
             <div style={modal} onClick={(e) => e.stopPropagation()}>
-              <h2 style={modalTitle}>Diagnostic Result</h2>
-              <div style={modalSub}>Preview your report and attachments</div>
-
-              <div style={modalBody}>
-                <div style={infoGrid}>
-                  <div style={infoCard}>
-                    <div style={infoLabel}>DATE</div>
-                    <div style={infoValue}>{selected ? formatMDY(selected) : "-"}</div>
+              {/* Header */}
+              <div style={modalHeader}>
+                <div style={headerGrid}>
+                  <div>
+                    <div style={patientNameStyle}>{fullName || "—"}</div>
+                    <div style={patientMetaStyle}>
+                      <div>{patientBirth}</div>
+                      <div>{patientAgeText}</div>
+                      <div>{patientContact}</div>
+                    </div>
                   </div>
-                  <div style={infoCard}>
-                    <div style={infoLabel}>PROCEDURE</div>
-                    <div style={infoValue}>{selected?.procedure || "-"}</div>
+
+                  <div style={headerRight}>
+                    <div style={rightMetaBlock}>
+                      <div style={rightMetaLabel}>M/F</div>
+                      <div style={rightMetaLabel}>Date</div>
+
+                      <div style={rightMetaValue}>{patientSex}</div>
+                      <div style={rightMetaValue}>{selected ? formatMDY(selected) : "—"}</div>
+
+                      <div style={rightMetaLine}>{selected?.procedure || "—"}</div>
+                      <div style={rightMetaLine}>{referringPhysician}</div>
+                    </div>
                   </div>
-                </div>
-
-                <div style={notesBox}>
-                  <div style={{ fontWeight: 900, marginBottom: 6 }}>Notes</div>
-                  <div style={{ opacity: 0.95 }}>{selected?.resultNotes ? selected.resultNotes : "—"}</div>
-                </div>
-
-                <div style={{ marginTop: 12, fontWeight: 900 }}>Attachment Preview</div>
-                <div style={previewOuter}>
-                  {pdfUrl ? (
-                    pdfIsPdf ? (
-                      <iframe title="Result PDF" src={pdfUrl} style={{ width: "100%", height: "100%", border: 0 }} />
-                    ) : (
-                      <img
-                        src={pdfUrl}
-                        alt="Result file"
-                        style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                      />
-                    )
-                  ) : (
-                    <div style={{ padding: 18, color: "#0f172a", fontWeight: 900 }}>No PDF/attachment available.</div>
-                  )}
                 </div>
               </div>
 
-              <div style={modalFooter}>
-                {selected?._id ? (
-                  <Link to={`/report/${selected._id}`} style={darkLinkBtn} onClick={closeViewModal}>
-                    Open Full Report
-                  </Link>
-                ) : null}
+              {/* Body */}
+              <div style={modalBody}>
+                {/* Left */}
+                <div style={leftPane}>
+                  <div style={sectionTitle}>Interpretation and Diagnosis:</div>
 
-                {pdfUrl ? (
-                  <a href={pdfUrl} target="_blank" rel="noreferrer" style={primaryLinkBtn}>
-                    Open PDF
-                  </a>
-                ) : null}
+                  <div style={notesArea}>{interpretationText || ""}</div>
 
-                <button type="button" style={closeBtn} onClick={closeViewModal}>
-                  Close
-                </button>
+                  <div style={leftFooter}>
+                    {selected?._id ? (
+                      <Link to={`/report/${selected._id}`} style={actionBtn(false)} onClick={closeViewModal}>
+                        <span aria-hidden="true" style={{ display: "grid", placeItems: "center" }}>
+                          <PrintIcon size={22} />
+                        </span>
+                        Print Results
+                      </Link>
+                    ) : (
+                      <button type="button" style={actionBtn(true)} disabled>
+                        <span aria-hidden="true" style={{ display: "grid", placeItems: "center" }}>
+                          <PrintIcon size={22} />
+                        </span>
+                        Print Results
+                      </button>
+                    )}
+
+                    {previewUrl ? (
+                      <a href={previewUrl} target="_blank" rel="noreferrer" style={actionBtn(false)}>
+                        View Full Image
+                      </a>
+                    ) : (
+                      <button type="button" style={actionBtn(true)} disabled>
+                        View Full Image
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right */}
+                <div style={rightPane}>
+                  {previewUrl ? (
+                    previewIsPdf ? (
+                      <iframe title="Result PDF" src={previewUrl} style={previewFrame} />
+                    ) : (
+                      <img src={previewUrl} alt="Result preview" style={previewImg} />
+                    )
+                  ) : (
+                    <div style={{ padding: 18, color: "#64748b", fontWeight: 900 }}>No image/PDF available.</div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -94,7 +94,7 @@ function shortId(id) {
   return String(id).slice(-8).toUpperCase();
 }
 
-// ✅ Prefer BSRT ID if populated, else fallback to _id short
+// ✅ Prefer BSRT ID if populated, else back to _id short
 function getPatientIdValue(patient) {
   if (!patient) return "—";
   if (typeof patient === "object") {
@@ -142,7 +142,7 @@ export default function AdminAppointments() {
   const [savingId, setSavingId] = useState(null);
 
   const [filters, setFilters] = useState({
-    status: "All",
+    status: "Pending",
     procedure: "All",
     date: "",
   });
@@ -193,7 +193,7 @@ export default function AdminAppointments() {
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.status && filters.status !== "All") params.set("status", filters.status);
+    if (filters.status && filters.status !== "Pending") params.set("status", filters.status);
     if (filters.procedure && filters.procedure !== "All") params.set("procedure", filters.procedure);
     if (filters.date) params.set("date", filters.date);
     const s = params.toString();

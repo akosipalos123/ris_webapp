@@ -166,16 +166,33 @@ function normalizePaymentStatus(rawStatus, hasReceipt) {
 }
 
 function getReceiptRawFromBill(b) {
-  return (
-    b?.receiptUrl ||
-    b?.receiptPath ||
-    b?.receipt ||
-    b?.fileUrl ||
-    b?.url ||
-    b?.invoiceUrl ||
-    b?.invoicePath ||
-    ""
-  );
+  return b?.receiptUrl || b?.receiptPath || b?.receipt || b?.fileUrl || b?.url || b?.invoiceUrl || b?.invoicePath || "";
+}
+
+/* ---------- FILE TYPE HELPERS (PDF / DICOM) ---------- */
+function getFileExt(name) {
+  const n = String(name || "");
+  const dot = n.lastIndexOf(".");
+  return dot >= 0 ? n.slice(dot + 1).toLowerCase() : "";
+}
+
+function isPdfFile(file) {
+  if (!file) return false;
+  const type = String(file.type || "").toLowerCase();
+  const ext = getFileExt(file.name);
+  return type === "application/pdf" || ext === "pdf";
+}
+
+function isDicomFile(file) {
+  if (!file) return false;
+  const type = String(file.type || "").toLowerCase();
+  const ext = getFileExt(file.name);
+  // Many browsers report .dcm as application/octet-stream, so extension matters.
+  return type.includes("dicom") || ext === "dcm" || ext === "dicom";
+}
+
+function isAllowedResultFile(file) {
+  return isPdfFile(file) || isDicomFile(file);
 }
 
 export default function AdminAppointmentBooking() {
@@ -212,8 +229,9 @@ export default function AdminAppointmentBooking() {
   // Upload Result modal (Complete flow)
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completeAppt, setCompleteAppt] = useState(null);
-  const [completePdf, setCompletePdf] = useState(null);
-  const [completeNotes, setCompleteNotes] = useState("");
+  const [completePdf, setCompletePdf] = useState(null); // PDF or DICOM
+  const [completeNotes, setCompleteNotes] = useState(""); // Description
+  const [completeImpression, setCompleteImpression] = useState(""); // NEW
   const [completeSaving, setCompleteSaving] = useState(false);
   const [completeBillingCode, setCompleteBillingCode] = useState("");
 
@@ -293,9 +311,7 @@ export default function AdminAppointmentBooking() {
       for (const b of Array.isArray(bills) ? bills : []) {
         const apptField = b?.appointmentId;
         const apptId =
-          apptField && typeof apptField === "object" && apptField._id
-            ? String(apptField._id)
-            : String(apptField || "");
+          apptField && typeof apptField === "object" && apptField._id ? String(apptField._id) : String(apptField || "");
 
         if (apptId && !map[apptId]) map[apptId] = b;
       }
@@ -401,19 +417,22 @@ export default function AdminAppointmentBooking() {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  // allow editing even if no bill exists yet (backend should upsert/create by appointmentId)
   async function updateBillStatusForAppointment(apptId, billId, nextStatus) {
     const authToken = getAuthTokenAny();
     if (!authToken) return nav("/login");
-    if (!billId) {
-      setMsg("No bill found for this appointment yet.");
-      return;
-    }
 
     try {
       setMsg("");
       setPaySavingId(apptId);
 
-      const updated = await apiPatch(`/api/admin/bills/${billId}/status`, authToken, { status: nextStatus });
+      let updated = null;
+
+      if (billId) {
+        updated = await apiPatch(`/api/admin/bills/${billId}/status`, authToken, { status: nextStatus });
+      } else {
+        updated = await apiPatch(`/api/admin/bills/by-appointment/${apptId}/status`, authToken, { status: nextStatus });
+      }
 
       setBillsMap((prev) => ({
         ...prev,
@@ -432,6 +451,7 @@ export default function AdminAppointmentBooking() {
     setCompleteAppt(appt);
     setCompletePdf(null);
     setCompleteNotes("");
+    setCompleteImpression("");
 
     const match = findXrayBillingByLabel(appt?.procedure);
     setCompleteBillingCode(match ? match.code : "");
@@ -445,6 +465,7 @@ export default function AdminAppointmentBooking() {
     setCompleteAppt(null);
     setCompletePdf(null);
     setCompleteNotes("");
+    setCompleteImpression("");
     setCompleteBillingCode("");
   }
 
@@ -455,20 +476,24 @@ export default function AdminAppointmentBooking() {
 
     if (!completeBillingCode) return setMsg("Billing item (procedure done) is required.");
     if (!selectedBilling) return setMsg("Invalid billing selection.");
-    if (!completeNotes.trim()) return setMsg("Notes are required.");
-    if (!completePdf) return setMsg("Result PDF is required.");
-    if (completePdf.type !== "application/pdf") return setMsg("File must be a PDF.");
+
+    if (!completeNotes.trim()) return setMsg("Description is required.");
+    if (!completeImpression.trim()) return setMsg("Impression is required.");
+
+    if (!completePdf) return setMsg("Result file is required.");
+    if (!isAllowedResultFile(completePdf)) return setMsg("File must be a PDF or DICOM (.dcm).");
 
     const maxBytes = 10 * 1024 * 1024;
-    if (completePdf.size > maxBytes) return setMsg("Result PDF is too large (max 10MB).");
+    if (completePdf.size > maxBytes) return setMsg("Result file is too large (max 10MB).");
 
     try {
       setCompleteSaving(true);
       setMsg("");
 
       const fd = new FormData();
-      fd.append("resultPdf", completePdf);
-      fd.append("notes", completeNotes.trim());
+      fd.append("resultPdf", completePdf); // keep backend field name
+      fd.append("notes", completeNotes.trim()); // Description
+      fd.append("impression", completeImpression.trim()); // NEW
 
       fd.append("billingCode", selectedBilling.code);
       fd.append("billingLabel", selectedBilling.label);
@@ -1163,6 +1188,8 @@ export default function AdminAppointmentBooking() {
                   </div>
                 ) : (
                   filteredRows.map((a) => {
+                    const apptId = String(a._id || "");
+
                     const patient = a.patientId || null;
                     const patientName = typeof patient === "object" ? fullNameProfileStyle(patient) : "—";
                     const patientId = getPatientIdValue(patient);
@@ -1170,7 +1197,7 @@ export default function AdminAppointmentBooking() {
                     const dt = toDateObj(a);
                     const dateText = dt ? dt.toLocaleDateString() : "—";
 
-                    const bill = billsMap?.[String(a._id)] || null;
+                    const bill = billsMap?.[apptId] || null;
                     const billId = bill?._id ? String(bill._id) : "";
 
                     const receiptRaw = getReceiptRawFromBill(bill);
@@ -1180,10 +1207,10 @@ export default function AdminAppointmentBooking() {
                     const statusRaw = bill?.status || "";
                     const payValue = normalizePaymentStatus(statusRaw, hasReceipt);
 
-                    const rowBusy = completeSaving || paySavingId === a._id;
+                    const rowBusy = completeSaving || paySavingId === apptId;
 
                     return (
-                      <div key={a._id} style={rowStyle}>
+                      <div key={apptId} style={rowStyle}>
                         <div style={{ fontWeight: 900 }}>{patientName}</div>
                         <div>{patientId}</div>
                         <div>{dateText}</div>
@@ -1192,10 +1219,10 @@ export default function AdminAppointmentBooking() {
                         <div>
                           <select
                             value={payValue}
-                            disabled={rowBusy || !billId}
-                            style={paymentSelectStyle(rowBusy || !billId)}
-                            title={!billId ? "No bill found for this appointment yet." : "Edit payment status"}
-                            onChange={(e) => updateBillStatusForAppointment(String(a._id), billId, e.target.value)}
+                            disabled={rowBusy}
+                            style={paymentSelectStyle(rowBusy)}
+                            title={!billId ? "No bill yet — changing this will create one." : "Edit payment status"}
+                            onChange={(e) => updateBillStatusForAppointment(apptId, billId, e.target.value)}
                           >
                             {PAYMENT_STATUSES.map((s) => (
                               <option key={s} value={s}>
@@ -1216,7 +1243,12 @@ export default function AdminAppointmentBooking() {
                         </div>
 
                         <div>
-                          <button type="button" style={btnOutline(false)} onClick={() => openCompleteModal(a)} disabled={completeSaving}>
+                          <button
+                            type="button"
+                            style={btnOutline(false)}
+                            onClick={() => openCompleteModal(a)}
+                            disabled={completeSaving}
+                          >
                             Upload
                           </button>
                         </div>
@@ -1307,19 +1339,21 @@ export default function AdminAppointmentBooking() {
                     </div>
 
                     <div>
-                      <div style={cardLabel}>Upload Result PDF *</div>
+                      <div style={cardLabel}>Upload Result File (PDF/DICOM) *</div>
                       <input
                         type="file"
-                        accept="application/pdf"
+                        accept=".pdf,.dcm,.dicom,application/pdf,application/dicom"
                         style={inputLight}
                         disabled={completeSaving}
                         onChange={(e) => setCompletePdf(e.target.files?.[0] || null)}
                       />
-                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>PDF only. Max 10MB.</div>
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
+                        PDF or DICOM (.dcm). Max 10MB.
+                      </div>
                     </div>
 
                     <div>
-                      <div style={cardLabel}>Notes *</div>
+                      <div style={cardLabel}>Description *</div>
                       <textarea
                         style={textareaLight}
                         rows={4}
@@ -1327,6 +1361,18 @@ export default function AdminAppointmentBooking() {
                         disabled={completeSaving}
                         onChange={(e) => setCompleteNotes(e.target.value)}
                         placeholder="Enter findings, remarks, or summary..."
+                      />
+                    </div>
+
+                    <div>
+                      <div style={cardLabel}>Impression *</div>
+                      <textarea
+                        style={textareaLight}
+                        rows={4}
+                        value={completeImpression}
+                        disabled={completeSaving}
+                        onChange={(e) => setCompleteImpression(e.target.value)}
+                        placeholder="Enter impression..."
                       />
                     </div>
                   </div>
@@ -1338,8 +1384,20 @@ export default function AdminAppointmentBooking() {
 
                     <button
                       type="button"
-                      style={bigBtnDark(completeSaving || !completePdf || !completeNotes.trim() || !completeBillingCode)}
-                      disabled={completeSaving || !completePdf || !completeNotes.trim() || !completeBillingCode}
+                      style={bigBtnDark(
+                        completeSaving ||
+                          !completePdf ||
+                          !completeNotes.trim() ||
+                          !completeImpression.trim() ||
+                          !completeBillingCode
+                      )}
+                      disabled={
+                        completeSaving ||
+                        !completePdf ||
+                        !completeNotes.trim() ||
+                        !completeImpression.trim() ||
+                        !completeBillingCode
+                      }
                       onClick={submitComplete}
                     >
                       {completeSaving ? "Saving..." : "Submit"}

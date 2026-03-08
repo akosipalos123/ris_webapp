@@ -108,23 +108,44 @@ router.patch("/appointments/:id/status", ...requireAnyAdmin, async (req, res) =>
   }
 });
 
-// ===== Complete with PDF + Notes + Billing =====
-const uploadPdf = multer({
+// ===== Complete with RESULT FILE (PDF/DICOM) + Description + Impression + Billing =====
+const uploadResult = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max PDF
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
 });
 
-// ✅ FIX: force PDF format so Cloudinary returns a .pdf URL (and previews as PDF)
-function uploadPdfBufferToCloudinary(buffer, filename) {
-  const publicId = filename.replace(/\.pdf$/i, "");
+function getLowerExt(filename) {
+  const n = String(filename || "");
+  const idx = n.lastIndexOf(".");
+  return idx >= 0 ? n.slice(idx + 1).toLowerCase() : "";
+}
 
+function isPdfUpload(file) {
+  if (!file) return false;
+  const ext = getLowerExt(file.originalname);
+  const mt = String(file.mimetype || "").toLowerCase();
+  return mt === "application/pdf" || ext === "pdf";
+}
+
+function isDicomUpload(file) {
+  if (!file) return false;
+  const ext = getLowerExt(file.originalname);
+  const mt = String(file.mimetype || "").toLowerCase();
+
+  // DICOM often arrives as application/octet-stream; extension is the reliable signal
+  if (ext === "dcm" || ext === "dicom") return true;
+
+  // If a client sends a dicom mimetype, accept it too
+  return mt.includes("dicom");
+}
+
+function uploadRawBufferToCloudinary(buffer, publicIdWithExt) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       {
         folder: "riswebapp/results",
         resource_type: "raw",
-        public_id: publicId,
-        format: "pdf",
+        public_id: publicIdWithExt, // include extension for raw
         overwrite: true,
       },
       (err, result) => {
@@ -139,10 +160,11 @@ function uploadPdfBufferToCloudinary(buffer, filename) {
 router.post(
   "/appointments/:id/complete",
   ...requireAnyAdmin,
-  uploadPdf.single("resultPdf"),
+  uploadResult.single("resultPdf"), // keep field name used by frontend
   async (req, res) => {
     try {
-      const notes = String(req.body?.notes || "").trim();
+      const description = String(req.body?.notes || "").trim(); // Description *
+      const impression = String(req.body?.impression || "").trim(); // Impression *
 
       const billingCode = String(req.body?.billingCode || "").trim();
       const billingLabel = String(req.body?.billingLabel || "").trim();
@@ -153,21 +175,33 @@ router.post(
         return res.status(400).json({ message: "Billing details are required." });
       }
 
-      if (!notes) return res.status(400).json({ message: "Notes are required." });
-      if (!req.file) return res.status(400).json({ message: "Result PDF is required." });
-      if (req.file.mimetype !== "application/pdf") {
-        return res.status(400).json({ message: "File must be a PDF." });
+      if (!description) return res.status(400).json({ message: "Description is required." });
+      if (!impression) return res.status(400).json({ message: "Impression is required." });
+
+      if (!req.file) return res.status(400).json({ message: "Result file is required (PDF or DICOM)." });
+
+      const okPdf = isPdfUpload(req.file);
+      const okDicom = isDicomUpload(req.file);
+      if (!okPdf && !okDicom) {
+        return res.status(400).json({ message: "File must be a PDF or DICOM (.dcm/.dicom)." });
       }
 
       const appt = await Appointment.findById(req.params.id);
       if (!appt) return res.status(404).json({ message: "Appointment not found" });
 
-      const safeName = `appt_${appt._id}_${Date.now()}.pdf`;
-      const uploaded = await uploadPdfBufferToCloudinary(req.file.buffer, safeName);
+      const now = Date.now();
+      let ext = getLowerExt(req.file.originalname);
+      if (okPdf) ext = "pdf";
+      if (ext === "dicom") ext = "dcm";
+      if (!ext) ext = okDicom ? "dcm" : "pdf";
+
+      const publicIdWithExt = `appt_${appt._id}_${now}.${ext}`;
+      const uploaded = await uploadRawBufferToCloudinary(req.file.buffer, publicIdWithExt);
 
       appt.status = "Completed";
-      appt.resultPdfUrl = uploaded.secure_url || "";
-      appt.resultNotes = notes;
+      appt.resultPdfUrl = uploaded.secure_url || ""; // keep existing field name for compatibility
+      appt.resultNotes = description; // Description
+      appt.impression = impression; // uses existing schema field
       appt.completedAt = new Date();
 
       // ✅ Admin is now a User, not a Patient
@@ -212,12 +246,12 @@ router.post(
       );
 
       // ✅ include bsrtId so frontend can display it instead of _id
-      const populated = await Appointment.findById(appt._id).populate(
-        "patientId",
-        "firstName lastName email bsrtId"
-      );
+      const populated = await Appointment.findById(appt._id).populate("patientId", "firstName lastName email bsrtId");
       return res.json(populated);
     } catch (err) {
+      if (err?.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ message: "File too large (max 10MB)" });
+      }
       return res.status(500).json({ message: "Complete failed", error: err.message });
     }
   }

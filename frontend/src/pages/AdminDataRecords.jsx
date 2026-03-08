@@ -153,6 +153,18 @@ function isPdfUrl(url) {
   return noQuery.endsWith(".pdf") || noQuery.includes(".pdf") || lower.includes("format=pdf");
 }
 
+// ✅ NEW: detect DICOM URLs so we don't try to iframe-preview them
+function isDicomUrl(url) {
+  const raw = String(url || "");
+  const noQuery = raw.split("?")[0].toLowerCase();
+  return (
+    noQuery.endsWith(".dcm") ||
+    noQuery.endsWith(".dicom") ||
+    noQuery.includes(".dcm") ||
+    noQuery.includes(".dicom")
+  );
+}
+
 function getFirstDiagnosticUrl(item) {
   const list = Array.isArray(item?.diagnosticImages) ? item.diagnosticImages : [];
   for (const img of list) {
@@ -499,8 +511,10 @@ export default function AdminDataRecords() {
     const sorted = [...list];
     if (sort === "Newest") sorted.sort((a, b) => b.newestMs - a.newestMs);
     if (sort === "Oldest") sorted.sort((a, b) => a.oldestMs - b.oldestMs);
-    if (sort === "Name A-Z") sorted.sort((a, b) => String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase()));
-    if (sort === "Name Z-A") sorted.sort((a, b) => String(b.name || "").toLowerCase().localeCompare(String(a.name || "").toLowerCase()));
+    if (sort === "Name A-Z")
+      sorted.sort((a, b) => String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase()));
+    if (sort === "Name Z-A")
+      sorted.sort((a, b) => String(b.name || "").toLowerCase().localeCompare(String(a.name || "").toLowerCase()));
     return sorted;
   }, [patientGroups, search, sort]);
 
@@ -1383,7 +1397,9 @@ export default function AdminDataRecords() {
               </div>
             </div>
 
-            <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>RISWebApp • Admin</div>
+            <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>
+              RISWebApp • Admin
+            </div>
           </div>
         </div>
 
@@ -1524,12 +1540,13 @@ export default function AdminDataRecords() {
               const proc = viewItem.procedure || "—";
 
               const imgUrl = getFirstDiagnosticUrl(viewItem);
-              const pdfUrl = viewItem.resultPdfUrl || "";
+              const fileUrl = viewItem.resultPdfUrl || ""; // PDF or DICOM now
 
-              const canShowImg = !!imgUrl && !isPdfUrl(imgUrl);
-              const canShowPdf = !canShowImg && !!pdfUrl;
+              const canShowImg = !!imgUrl && !isPdfUrl(imgUrl) && !isDicomUrl(imgUrl);
+              const canShowPdf = !canShowImg && !!fileUrl && isPdfUrl(fileUrl);
+              const isDicom = !canShowImg && !!fileUrl && isDicomUrl(fileUrl);
 
-              const fullTarget = imgUrl || pdfUrl;
+              const fullTarget = imgUrl || fileUrl;
 
               const onViewFull = () => {
                 if (fullTarget) openInNewTab(fullTarget);
@@ -1604,7 +1621,7 @@ export default function AdminDataRecords() {
                             )}
 
                             <button type="button" style={viewActionBtn} onClick={onViewFull} disabled={!fullTarget}>
-                              View Full Image
+                              {isDicom ? "Download DICOM" : "View Full Image"}
                             </button>
                           </div>
                         </div>
@@ -1614,7 +1631,16 @@ export default function AdminDataRecords() {
                             {canShowImg ? (
                               <img src={imgUrl} alt="Diagnostic" style={viewPreviewImg} />
                             ) : canShowPdf ? (
-                              <iframe src={pdfUrl} title="Result PDF" style={viewPreviewFrame} />
+                              <iframe src={fileUrl} title="Result PDF" style={viewPreviewFrame} />
+                            ) : isDicom ? (
+                              <div style={{ ...viewEmpty, textAlign: "center" }}>
+                                <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>DICOM preview not supported</div>
+                                <div style={{ fontSize: 13, fontWeight: 800, opacity: 0.95, lineHeight: 1.4 }}>
+                                  This file is a DICOM (.dcm). Browsers can’t render it here.
+                                  <br />
+                                  Click <b>Download DICOM</b> to download/open it in a DICOM viewer.
+                                </div>
+                              </div>
                             ) : (
                               <div style={viewEmpty}>No image/PDF available</div>
                             )}
@@ -1640,10 +1666,18 @@ export default function AdminDataRecords() {
               <div style={modalInner}>
                 <div style={card}>
                   {isPdfUrl(receiptUrlView) ? (
-                    <iframe src={receiptUrlView} title="Receipt PDF" style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }} />
+                    <iframe
+                      src={receiptUrlView}
+                      title="Receipt PDF"
+                      style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
+                    />
                   ) : (
                     <div style={{ display: "grid", placeItems: "center" }}>
-                      <img src={receiptUrlView} alt="Receipt" style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }} />
+                      <img
+                        src={receiptUrlView}
+                        alt="Receipt"
+                        style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
+                      />
                     </div>
                   )}
 

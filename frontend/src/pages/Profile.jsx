@@ -599,9 +599,6 @@ export default function Profile() {
 
                         <div className="actionsRow">
                           {/* ✅ patient -> /appointments, admin/superadmin -> /admin/appointment-booking */}
-                          <Link to={appointmentsRoute} className="btnPrimary">
-                            Book Appointment
-                          </Link>
 
                           <Link to="/profile/edit" className="btnOutline">
                             Edit Profile
@@ -1126,19 +1123,7 @@ export default function Profile() {
 
                   <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
                     {/* ✅ patient -> /appointments, admin/superadmin -> /admin/appointment-booking */}
-                    <Link
-                      to={appointmentsRoute}
-                      style={{
-                        textDecoration: "none",
-                        background: DARK,
-                        color: "#fff",
-                        padding: "8px 12px",
-                        borderRadius: 12,
-                        fontWeight: 900,
-                      }}
-                    >
-                      Book Appointment
-                    </Link>
+
 
                     <Link
                       to="/profile/edit"

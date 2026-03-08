@@ -3,10 +3,8 @@ const mongoose = require("mongoose");
 
 const patientSchema = new mongoose.Schema(
   {
-    // ✅ human-friendly ID for all users (patients/admins/superadmins)
     bsrtId: { type: String, unique: true, index: true, default: "" },
 
-    // ✅ single-table RBAC (patient/admin/superadmin)
     role: {
       type: String,
       enum: ["patient", "admin", "superadmin"],
@@ -15,7 +13,6 @@ const patientSchema = new mongoose.Schema(
       trim: true,
     },
 
-    // ✅ for admin management (archive/restore)
     isArchived: { type: Boolean, default: false, index: true },
 
     firstName: { type: String, required: true, trim: true },
@@ -34,18 +31,15 @@ const patientSchema = new mongoose.Schema(
       type: Date,
       validate: {
         validator: function (v) {
-          if (!v) return true; // allow empty
-          return v <= new Date(); // not in the future
+          if (!v) return true;
+          return v <= new Date();
         },
         message: "Birthdate cannot be in the future.",
       },
     },
 
     contactNumber: { type: String, trim: true, default: "" },
-
-    // ✅ NEW: Home Address (this is why it wasn't saving)
     address: { type: String, trim: true, default: "" },
-
     avatarUrl: { type: String, trim: true, default: "" },
 
     email: {
@@ -57,6 +51,10 @@ const patientSchema = new mongoose.Schema(
     },
 
     passwordHash: { type: String, required: true, select: false },
+
+    // ✅ ADD THESE (Forgot Password / Reset Password)
+    passwordResetTokenHash: { type: String, index: true, select: false },
+    passwordResetExpiresAt: { type: Date, index: true, select: false },
 
     // Login OTP fields
     loginOtpHash: { type: String, select: false },

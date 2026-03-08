@@ -2,7 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiPatch, apiUpload } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { XRAY_BILLING_ITEMS, formatPhp, findXrayBillingByLabel } from "../constants/procedures";
+import {
+  XRAY_BILLING_ITEMS,
+  formatPhp,
+  findXrayBillingByLabel,
+} from "../constants/procedures";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
@@ -187,7 +191,6 @@ function isDicomFile(file) {
   if (!file) return false;
   const type = String(file.type || "").toLowerCase();
   const ext = getFileExt(file.name);
-  // Many browsers report .dcm as application/octet-stream, so extension matters.
   return type.includes("dicom") || ext === "dcm" || ext === "dicom";
 }
 
@@ -195,9 +198,40 @@ function isAllowedResultFile(file) {
   return isPdfFile(file) || isDicomFile(file);
 }
 
+/* ---------- RESPONSIVE HELPER (same as Profile.jsx pattern) ---------- */
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 export default function AdminAppointmentBooking() {
   const nav = useNavigate();
   const loc = useLocation();
+
+  // Mobile/Tablet uses NEW layout (drawer + cards); Desktop uses OLD layout (inline table)
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
+  const isPhone = useMediaQuery("(max-width: 640px)");
+  const isTiny = useMediaQuery("(max-width: 420px)");
 
   const [msg, setMsg] = useState("");
   const [checkingAdmin, setCheckingAdmin] = useState(true);
@@ -217,7 +251,12 @@ export default function AdminAppointmentBooking() {
   // UI: dropdown / sidebar
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+
+  // OLD desktop sidebar
   const [sideOpen, setSideOpen] = useState(true);
+
+  // NEW mobile/tablet drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Payment saving per row
   const [paySavingId, setPaySavingId] = useState(null);
@@ -238,6 +277,8 @@ export default function AdminAppointmentBooking() {
   const selectedBilling = useMemo(() => {
     return XRAY_BILLING_ITEMS.find((x) => x.code === completeBillingCode) || null;
   }, [completeBillingCode]);
+
+  const busy = loading || checkingAdmin || completeSaving;
 
   function onFilterChange(e) {
     const { name, value } = e.target;
@@ -311,7 +352,9 @@ export default function AdminAppointmentBooking() {
       for (const b of Array.isArray(bills) ? bills : []) {
         const apptField = b?.appointmentId;
         const apptId =
-          apptField && typeof apptField === "object" && apptField._id ? String(apptField._id) : String(apptField || "");
+          apptField && typeof apptField === "object" && apptField._id
+            ? String(apptField._id)
+            : String(apptField || "");
 
         if (apptId && !map[apptId]) map[apptId] = b;
       }
@@ -362,6 +405,26 @@ export default function AdminAppointmentBooking() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryString, checkingAdmin]);
 
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open (mobile/tablet)
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
+
   // close dropdown on outside click / ESC
   useEffect(() => {
     if (!menuOpen) return;
@@ -395,6 +458,7 @@ export default function AdminAppointmentBooking() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
     localStorage.removeItem("token");
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminRole");
@@ -551,6 +615,7 @@ export default function AdminAppointmentBooking() {
   const DARK = "#0b3d2e";
   const BG = "#ffffff";
 
+  // Desktop sizes (old layout)
   const SIDEBAR_OPEN_W = 280;
   const SIDEBAR_CLOSED_W = 78;
 
@@ -896,7 +961,7 @@ export default function AdminAppointmentBooking() {
     position: "fixed",
     inset: 0,
     background: "rgba(0,0,0,.55)",
-    zIndex: 2000,
+    zIndex: 5000,
     display: "grid",
     placeItems: "center",
     padding: 18,
@@ -916,7 +981,7 @@ export default function AdminAppointmentBooking() {
   };
 
   const modalHeader = { textAlign: "center", color: "#fff", lineHeight: 1.05, marginTop: 2 };
-  const modalTitle = { fontSize: 40, fontWeight: 900, margin: 0 };
+  const modalTitle = { fontSize: isPhone ? 28 : 40, fontWeight: 900, margin: 0 };
   const modalSub = { margin: "6px 0 0", fontSize: 14, opacity: 0.9, fontWeight: 700 };
 
   const modalInner = { flex: 1, overflow: "auto", paddingRight: 6 };
@@ -969,6 +1034,95 @@ export default function AdminAppointmentBooking() {
     minWidth: 200,
   });
 
+  /* ---------- NARROW (Mobile/Tablet) inline styles (cards) ---------- */
+  const nWrap = { maxWidth: 1100, margin: "0 auto" };
+
+  const nFilters = {
+    display: "grid",
+    gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr",
+    gap: 12,
+    alignItems: "end",
+    marginTop: 8,
+  };
+
+  const nLabel = { fontSize: 16, fontWeight: 900, color: DARK, marginBottom: 8 };
+
+  const nControl = {
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 12,
+    border: `2px solid ${DARK}`,
+    background: DARK,
+    color: "#fff",
+    fontWeight: 900,
+    fontSize: 16,
+    outline: "none",
+  };
+
+  const nBtnsRow = {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    ...(isPhone ? {} : { gridColumn: "1 / -1" }),
+  };
+
+  const nBtn = (disabled) => ({
+    background: "#fff",
+    color: DARK,
+    border: `2px solid ${DARK}`,
+    borderRadius: 14,
+    padding: "10px 14px",
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+    whiteSpace: "nowrap",
+  });
+
+  const nPanel = {
+    borderRadius: 28,
+    border: `3px solid ${DARK}`,
+    background: "#fff",
+    padding: "14px 14px 12px",
+    overflow: "hidden",
+    marginTop: 12,
+  };
+
+  const nList = { display: "grid", gap: 12 };
+
+  const nCard = {
+    borderRadius: 18,
+    border: "2px solid rgba(11,61,46,.22)",
+    padding: 14,
+    background: "#fff",
+  };
+
+  const nRow = {
+    display: "grid",
+    gridTemplateColumns: isTiny ? "96px 1fr" : "140px 1fr",
+    gap: 10,
+    marginBottom: 10,
+    alignItems: "start",
+  };
+
+  const nKey = {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  };
+
+  const nVal = { fontWeight: 900, color: "#0f172a", wordBreak: "break-word" };
+
+  const nActions = {
+    display: "grid",
+    gridTemplateColumns: isTiny ? "1fr" : "1fr 1fr",
+    gap: 10,
+    alignItems: "center",
+    marginTop: 8,
+  };
+
+  /* ---------- SIDEBAR ITEMS (match your routes) ---------- */
   const SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
@@ -982,6 +1136,146 @@ export default function AdminAppointmentBooking() {
     return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
   };
 
+  /* ---------- MODALS as reusable elements (used in BOTH layouts) ---------- */
+  const receiptModalEl =
+    receiptOpen && receiptUrlView ? (
+      <div style={overlay} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
+        <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={modalHeader}>
+            <h2 style={modalTitle}>Receipt</h2>
+            <div style={modalSub}>Preview receipt (PDF/Image)</div>
+          </div>
+
+          <div style={modalInner}>
+            <div style={card}>
+              {isPdfUrl(receiptUrlView) ? (
+                <iframe
+                  src={receiptUrlView}
+                  title="Receipt PDF"
+                  style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
+                />
+              ) : (
+                <div style={{ display: "grid", placeItems: "center" }}>
+                  <img src={receiptUrlView} alt="Receipt" style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }} />
+                </div>
+              )}
+
+              <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+                <button type="button" style={bigBtnOutline(false)} onClick={closeReceiptModal}>
+                  Close
+                </button>
+
+                <button type="button" style={bigBtnDark(false)} onClick={() => openReceiptInNewTab(receiptUrlView)}>
+                  Open in new tab
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const uploadModalEl = showCompleteModal ? (
+    <div style={overlay} onClick={closeCompleteModal} role="dialog" aria-modal="true" aria-label="Upload result">
+      <div style={modal} onClick={(e) => e.stopPropagation()}>
+        <div style={modalHeader}>
+          <h2 style={modalTitle}>Upload Result</h2>
+          <div style={modalSub}>
+            {completeAppt?.procedure || "-"} • {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
+          </div>
+        </div>
+
+        <div style={modalInner}>
+          <div style={card}>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <div style={cardLabel}>Procedure Done / Billing *</div>
+                <select
+                  style={inputLight}
+                  value={completeBillingCode}
+                  disabled={completeSaving}
+                  onChange={(e) => setCompleteBillingCode(e.target.value)}
+                >
+                  <option value="">Select X-Ray procedure...</option>
+                  {XRAY_BILLING_ITEMS.map((x) => (
+                    <option key={x.code} value={x.code}>
+                      {x.label} — {formatPhp(x.fee)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <div style={cardLabel}>Upload Result File (PDF/DICOM) *</div>
+                <input
+                  type="file"
+                  accept=".pdf,.dcm,.dicom,application/pdf,application/dicom"
+                  style={inputLight}
+                  disabled={completeSaving}
+                  onChange={(e) => setCompletePdf(e.target.files?.[0] || null)}
+                />
+                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
+                  PDF or DICOM (.dcm). Max 10MB.
+                </div>
+              </div>
+
+              <div>
+                <div style={cardLabel}>Description *</div>
+                <textarea
+                  style={textareaLight}
+                  rows={4}
+                  value={completeNotes}
+                  disabled={completeSaving}
+                  onChange={(e) => setCompleteNotes(e.target.value)}
+                  placeholder="Enter findings, remarks, or summary..."
+                />
+              </div>
+
+              <div>
+                <div style={cardLabel}>Impression *</div>
+                <textarea
+                  style={textareaLight}
+                  rows={4}
+                  value={completeImpression}
+                  disabled={completeSaving}
+                  onChange={(e) => setCompleteImpression(e.target.value)}
+                  placeholder="Enter impression..."
+                />
+              </div>
+            </div>
+
+            <div style={modalBtns}>
+              <button type="button" style={bigBtnOutline(completeSaving)} disabled={completeSaving} onClick={closeCompleteModal}>
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                style={bigBtnDark(
+                  completeSaving ||
+                    !completePdf ||
+                    !completeNotes.trim() ||
+                    !completeImpression.trim() ||
+                    !completeBillingCode
+                )}
+                disabled={
+                  completeSaving ||
+                  !completePdf ||
+                  !completeNotes.trim() ||
+                  !completeImpression.trim() ||
+                  !completeBillingCode
+                }
+                onClick={submitComplete}
+              >
+                {completeSaving ? "Saving..." : "Submit"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (checkingAdmin) {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", color: "#64748b", fontWeight: 900 }}>
@@ -990,6 +1284,296 @@ export default function AdminAppointmentBooking() {
     );
   }
 
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — same format as Profile/AdminAppointments
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
+
+    return (
+      <div className={rootClass} style={{ "--dark": DARK, "--bg": BG }}>
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button
+                  type="button"
+                  className="burger"
+                  title="Menu"
+                  onClick={() => setDrawerOpen((v) => !v)}
+                  aria-label="Open menu"
+                >
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">Appointment Booking</div>
+                  <div className="homeSub">Approved appointments only</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">{idLabelText}</div>
+                  <div className="patientIdValue">{adminIdShort}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={adminProfile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{adminProfile?.email || "Admin"}</div>
+                    <div className="ddSub">{idLabelText}</div>
+                    <div className="ddId">{adminIdShort}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        ⎋ Sign Out
+                      </button>
+
+                      <Link to="/profile" className="ddBtn ddBtnSolid" onClick={() => setMenuOpen(false)}>
+                        ↩ Profile
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            <div className="contentInner" style={nWrap}>
+              {msg ? <div style={msgBox}>{msg}</div> : null}
+
+              {/* FILTERS */}
+              <div style={nFilters}>
+                <div>
+                  <div style={nLabel}>Payment Status</div>
+                  <select
+                    name="paymentStatus"
+                    value={filters.paymentStatus}
+                    onChange={onFilterChange}
+                    style={nControl}
+                    disabled={busy}
+                  >
+                    {paymentStatusOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div style={nLabel}>Date</div>
+                  <input
+                    type="date"
+                    name="date"
+                    value={filters.date}
+                    onChange={onFilterChange}
+                    style={nControl}
+                    disabled={busy}
+                  />
+                </div>
+
+                <div style={nBtnsRow}>
+                  <button type="button" style={nBtn(busy)} onClick={load} disabled={busy}>
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    style={nBtn(busy)}
+                    onClick={() => setFilters({ paymentStatus: "All", date: "" })}
+                    disabled={busy}
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+
+              {/* CARD LIST */}
+              <div style={nPanel}>
+                {loading ? (
+                  <div style={{ padding: "6px 2px", color: "#64748b", fontWeight: 800 }}>Loading appointments...</div>
+                ) : filteredRows.length === 0 ? (
+                  <div style={{ padding: "6px 2px", color: "#64748b", fontWeight: 800 }}>
+                    No Approved appointments found.
+                  </div>
+                ) : (
+                  <div style={nList}>
+                    {filteredRows.map((a) => {
+                      const apptId = String(a._id || "");
+
+                      const patient = a.patientId || null;
+                      const patientName = typeof patient === "object" ? fullNameProfileStyle(patient) : "—";
+                      const patientId = getPatientIdValue(patient);
+
+                      const dt = toDateObj(a);
+                      const dateText = dt ? dt.toLocaleDateString() : "—";
+
+                      const bill = billsMap?.[apptId] || null;
+                      const billId = bill?._id ? String(bill._id) : "";
+
+                      const receiptRaw = getReceiptRawFromBill(bill);
+                      const receiptUrl = normalizeFileUrl(receiptRaw);
+                      const hasReceipt = Boolean(receiptUrl);
+
+                      const statusRaw = bill?.status || "";
+                      const payValue = normalizePaymentStatus(statusRaw, hasReceipt);
+
+                      const rowBusy = completeSaving || paySavingId === apptId;
+
+                      return (
+                        <div key={apptId} style={nCard}>
+                          <div style={nRow}>
+                            <div style={nKey}>Patient</div>
+                            <div style={nVal}>{patientName}</div>
+                          </div>
+
+                          <div style={nRow}>
+                            <div style={nKey}>Patient ID</div>
+                            <div style={nVal}>{patientId}</div>
+                          </div>
+
+                          <div style={nRow}>
+                            <div style={nKey}>Date</div>
+                            <div style={nVal}>{dateText}</div>
+                          </div>
+
+                          <div style={nRow}>
+                            <div style={nKey}>Procedure</div>
+                            <div style={nVal}>{a?.procedure || "—"}</div>
+                          </div>
+
+                          <div style={{ ...nRow, marginBottom: 0 }}>
+                            <div style={nKey}>Payment</div>
+                            <div>
+                              <select
+                                value={payValue}
+                                disabled={rowBusy}
+                                style={paymentSelectStyle(rowBusy)}
+                                title={!billId ? "No bill yet — changing this will create one." : "Edit payment status"}
+                                onChange={(e) => updateBillStatusForAppointment(apptId, billId, e.target.value)}
+                              >
+                                {PAYMENT_STATUSES.map((s) => (
+                                  <option key={s} value={s}>
+                                    {s}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div style={nActions}>
+                            {hasReceipt ? (
+                              <button type="button" style={btnDark(false)} onClick={() => openReceiptModal(receiptUrl)} disabled={rowBusy}>
+                                View Receipt
+                              </button>
+                            ) : (
+                              <button type="button" style={btnDark(true)} disabled>
+                                No Receipt
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              style={btnOutline(false)}
+                              onClick={() => openCompleteModal(a)}
+                              disabled={completeSaving}
+                            >
+                              Upload Result
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>
+                RISWebApp • Admin
+              </div>
+            </div>
+          </div>
+
+          {receiptModalEl}
+          {uploadModalEl}
+        </main>
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
   return (
     <div style={shell}>
       {/* LEFT SIDEBAR */}
@@ -1243,12 +1827,7 @@ export default function AdminAppointmentBooking() {
                         </div>
 
                         <div>
-                          <button
-                            type="button"
-                            style={btnOutline(false)}
-                            onClick={() => openCompleteModal(a)}
-                            disabled={completeSaving}
-                          >
+                          <button type="button" style={btnOutline(false)} onClick={() => openCompleteModal(a)} disabled={completeSaving}>
                             Upload
                           </button>
                         </div>
@@ -1265,149 +1844,8 @@ export default function AdminAppointmentBooking() {
           </div>
         </div>
 
-        {/* RECEIPT MODAL */}
-        {receiptOpen && receiptUrlView ? (
-          <div style={overlay} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
-            <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
-              <div style={modalHeader}>
-                <h2 style={modalTitle}>Receipt</h2>
-                <div style={modalSub}>Preview receipt (PDF/Image)</div>
-              </div>
-
-              <div style={modalInner}>
-                <div style={card}>
-                  {isPdfUrl(receiptUrlView) ? (
-                    <iframe
-                      src={receiptUrlView}
-                      title="Receipt PDF"
-                      style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
-                    />
-                  ) : (
-                    <div style={{ display: "grid", placeItems: "center" }}>
-                      <img
-                        src={receiptUrlView}
-                        alt="Receipt"
-                        style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
-                      />
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-                    <button type="button" style={bigBtnOutline(false)} onClick={closeReceiptModal}>
-                      Close
-                    </button>
-
-                    <button type="button" style={bigBtnDark(false)} onClick={() => openReceiptInNewTab(receiptUrlView)}>
-                      Open in new tab
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {/* UPLOAD RESULT MODAL */}
-        {showCompleteModal ? (
-          <div style={overlay} onClick={closeCompleteModal} role="dialog" aria-modal="true" aria-label="Upload result">
-            <div style={modal} onClick={(e) => e.stopPropagation()}>
-              <div style={modalHeader}>
-                <h2 style={modalTitle}>Upload Result</h2>
-                <div style={modalSub}>
-                  {completeAppt?.procedure || "-"} • {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
-                </div>
-              </div>
-
-              <div style={modalInner}>
-                <div style={card}>
-                  <div style={{ display: "grid", gap: 12 }}>
-                    <div>
-                      <div style={cardLabel}>Procedure Done / Billing *</div>
-                      <select
-                        style={inputLight}
-                        value={completeBillingCode}
-                        disabled={completeSaving}
-                        onChange={(e) => setCompleteBillingCode(e.target.value)}
-                      >
-                        <option value="">Select X-Ray procedure...</option>
-                        {XRAY_BILLING_ITEMS.map((x) => (
-                          <option key={x.code} value={x.code}>
-                            {x.label} — {formatPhp(x.fee)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <div style={cardLabel}>Upload Result File (PDF/DICOM) *</div>
-                      <input
-                        type="file"
-                        accept=".pdf,.dcm,.dicom,application/pdf,application/dicom"
-                        style={inputLight}
-                        disabled={completeSaving}
-                        onChange={(e) => setCompletePdf(e.target.files?.[0] || null)}
-                      />
-                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
-                        PDF or DICOM (.dcm). Max 10MB.
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={cardLabel}>Description *</div>
-                      <textarea
-                        style={textareaLight}
-                        rows={4}
-                        value={completeNotes}
-                        disabled={completeSaving}
-                        onChange={(e) => setCompleteNotes(e.target.value)}
-                        placeholder="Enter findings, remarks, or summary..."
-                      />
-                    </div>
-
-                    <div>
-                      <div style={cardLabel}>Impression *</div>
-                      <textarea
-                        style={textareaLight}
-                        rows={4}
-                        value={completeImpression}
-                        disabled={completeSaving}
-                        onChange={(e) => setCompleteImpression(e.target.value)}
-                        placeholder="Enter impression..."
-                      />
-                    </div>
-                  </div>
-
-                  <div style={modalBtns}>
-                    <button type="button" style={bigBtnOutline(completeSaving)} disabled={completeSaving} onClick={closeCompleteModal}>
-                      Cancel
-                    </button>
-
-                    <button
-                      type="button"
-                      style={bigBtnDark(
-                        completeSaving ||
-                          !completePdf ||
-                          !completeNotes.trim() ||
-                          !completeImpression.trim() ||
-                          !completeBillingCode
-                      )}
-                      disabled={
-                        completeSaving ||
-                        !completePdf ||
-                        !completeNotes.trim() ||
-                        !completeImpression.trim() ||
-                        !completeBillingCode
-                      }
-                      onClick={submitComplete}
-                    >
-                      {completeSaving ? "Saving..." : "Submit"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        {receiptModalEl}
+        {uploadModalEl}
       </main>
     </div>
   );

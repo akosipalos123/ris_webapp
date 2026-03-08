@@ -153,7 +153,7 @@ function isPdfUrl(url) {
   return noQuery.endsWith(".pdf") || noQuery.includes(".pdf") || lower.includes("format=pdf");
 }
 
-// ✅ NEW: detect DICOM URLs so we don't try to iframe-preview them
+// ✅ detect DICOM URLs so we don't try to iframe-preview them
 function isDicomUrl(url) {
   const raw = String(url || "");
   const noQuery = raw.split("?")[0].toLowerCase();
@@ -206,9 +206,40 @@ function getPatientEmail(patientId) {
   return String(patientId.email || patientId.emailAddress || "").trim();
 }
 
+/* ---------- RESPONSIVE HELPER (same pattern as Profile.jsx) ---------- */
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = (e) => setMatches(e.matches);
+
+    if (mql.addEventListener) mql.addEventListener("change", onChange);
+    else mql.addListener(onChange);
+
+    setMatches(mql.matches);
+
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener("change", onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+
+  return matches;
+}
+
 export default function AdminDataRecords() {
   const nav = useNavigate();
   const loc = useLocation();
+
+  // Mobile/Tablet uses NEW layout (drawer + cards); Desktop uses OLD layout (inline table)
+  const isNarrow = useMediaQuery("(max-width: 1024px)");
+  const isPhone = useMediaQuery("(max-width: 640px)");
+  const isTiny = useMediaQuery("(max-width: 420px)");
 
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
@@ -220,8 +251,12 @@ export default function AdminDataRecords() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
+  // OLD desktop sidebar
   const [sideOpen, setSideOpen] = useState(true);
   const toggleSidebar = () => setSideOpen((v) => !v);
+
+  // NEW mobile/tablet drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Newest");
@@ -257,6 +292,26 @@ export default function AdminDataRecords() {
     if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
   }
+
+  // Close drawer on route change (mobile/tablet)
+  useEffect(() => {
+    if (isNarrow) setDrawerOpen(false);
+  }, [loc.pathname, isNarrow]);
+
+  // Close drawer when switching to desktop
+  useEffect(() => {
+    if (!isNarrow) setDrawerOpen(false);
+  }, [isNarrow]);
+
+  // Scroll lock when drawer is open (mobile/tablet)
+  useEffect(() => {
+    if (!isNarrow) return;
+    const prev = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = drawerOpen ? "hidden" : prev || "";
+    return () => {
+      document.documentElement.style.overflow = prev;
+    };
+  }, [drawerOpen, isNarrow]);
 
   async function ensureAdmin() {
     const adminToken = localStorage.getItem("adminToken");
@@ -429,6 +484,7 @@ export default function AdminDataRecords() {
 
   function logout() {
     setMenuOpen(false);
+    setDrawerOpen(false);
     localStorage.removeItem("token");
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminRole");
@@ -544,6 +600,33 @@ export default function AdminDataRecords() {
   const DARK = "#0b3d2e";
   const BG = "#ffffff";
 
+  const msgBox = {
+    padding: "10px 12px",
+    border: "1px solid #f59e0b",
+    background: "#fffbeb",
+    borderRadius: 12,
+    marginBottom: 12,
+    color: "#0f172a",
+    fontWeight: 800,
+  };
+
+  /* ---------- SIDEBAR ITEMS (match your routes) ---------- */
+  const SIDE_ITEMS = [
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
+    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon, exact: true },
+    { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon, exact: true },
+    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
+  ];
+
+  const isItemActive = (to, exact) => {
+    if (exact) return loc.pathname === to;
+    return loc.pathname === to || loc.pathname.startsWith(`${to}/`);
+  };
+
+  /* =========================================================
+     DESKTOP (OLD layout) styles
+     ========================================================= */
   const SIDEBAR_OPEN_W = 280;
   const SIDEBAR_CLOSED_W = 78;
 
@@ -757,16 +840,6 @@ export default function AdminDataRecords() {
   const content = { flex: "1 1 auto", overflow: "auto", paddingRight: 4 };
   const contentWrap = { maxWidth: 1180 };
 
-  const msgBox = {
-    padding: "10px 12px",
-    border: "1px solid #f59e0b",
-    background: "#fffbeb",
-    borderRadius: 12,
-    marginBottom: 12,
-    color: "#0f172a",
-    fontWeight: 800,
-  };
-
   const panel = {
     borderRadius: 34,
     border: `4px solid ${DARK}`,
@@ -860,14 +933,98 @@ export default function AdminDataRecords() {
     whiteSpace: "nowrap",
   });
 
-  // OVERLAYS
+  /* =========================================================
+     NARROW (Mobile/Tablet) list styles (cards)
+     ========================================================= */
+  const nWrap = { maxWidth: 1100, margin: "0 auto" };
+
+  const nPanel = {
+    borderRadius: 28,
+    border: `3px solid ${DARK}`,
+    background: "#fff",
+    padding: "14px 14px 12px",
+    overflow: "hidden",
+    marginTop: 12,
+  };
+
+  const nTop = {
+    display: "grid",
+    gridTemplateColumns: isPhone ? "1fr" : "1fr auto",
+    gap: 12,
+    alignItems: "end",
+    marginTop: 6,
+  };
+
+  const nSearchPill = {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    border: `3px solid ${DARK}`,
+    borderRadius: 999,
+    padding: "10px 14px",
+    width: "100%",
+    background: "#fff",
+  };
+
+  const nSearchInput = { ...searchInput, fontSize: 15 };
+
+  const nSortSelect = {
+    width: isPhone ? "100%" : 160,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: `2px solid ${DARK}`,
+    background: "#fff",
+    color: "#0f172a",
+    fontWeight: 900,
+    outline: "none",
+    cursor: "pointer",
+  };
+
+  const nList = { display: "grid", gap: 12, marginTop: 12 };
+
+  const nCard = {
+    borderRadius: 18,
+    border: "2px solid rgba(11,61,46,.22)",
+    padding: 14,
+    background: "#fff",
+  };
+
+  const nRow = {
+    display: "grid",
+    gridTemplateColumns: isTiny ? "96px 1fr" : "120px 1fr",
+    gap: 10,
+    marginBottom: 10,
+    alignItems: "start",
+  };
+
+  const nKey = {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  };
+
+  const nVal = { fontWeight: 900, color: "#0f172a", wordBreak: "break-word" };
+
+  const nActions = {
+    display: "grid",
+    gridTemplateColumns: isTiny ? "1fr" : "1fr",
+    gap: 10,
+    alignItems: "center",
+    marginTop: 6,
+  };
+
+  /* =========================================================
+     OVERLAYS + MODALS (used in BOTH layouts)
+     ========================================================= */
   const overlayBase = {
     position: "fixed",
     inset: 0,
     background: "rgba(0,0,0,.55)",
     display: "grid",
     placeItems: "center",
-    padding: 18,
+    padding: isPhone ? 10 : 18,
   };
   const overlayPatient = { ...overlayBase, zIndex: 1900 };
   const overlayView = { ...overlayBase, zIndex: 2000 };
@@ -879,7 +1036,7 @@ export default function AdminDataRecords() {
     height: "min(760px, 88vh)",
     borderRadius: 44,
     background: "rgba(0,0,0,.55)",
-    padding: 10,
+    padding: isPhone ? 8 : 10,
     boxShadow: "0 28px 80px rgba(0,0,0,.55)",
     overflow: "hidden",
   };
@@ -898,7 +1055,7 @@ export default function AdminDataRecords() {
   };
 
   const patientTop = {
-    padding: "18px 22px 10px",
+    padding: isPhone ? "14px 16px 8px" : "18px 22px 10px",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -907,7 +1064,7 @@ export default function AdminDataRecords() {
 
   const patientName = {
     fontWeight: 900,
-    fontSize: 34,
+    fontSize: isPhone ? 24 : 34,
     lineHeight: 1.1,
     letterSpacing: 0.2,
     textShadow: "0 2px 10px rgba(0,0,0,.35)",
@@ -931,8 +1088,8 @@ export default function AdminDataRecords() {
   const patientInfoRow = {
     marginTop: 10,
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 28,
+    gridTemplateColumns: isPhone ? "1fr" : "1fr 1fr",
+    gap: isPhone ? 12 : 28,
     maxWidth: 980,
   };
 
@@ -941,7 +1098,7 @@ export default function AdminDataRecords() {
   const infoValue = { fontWeight: 800, fontSize: 13, opacity: 0.95 };
 
   const apptPill = {
-    margin: "10px 22px 14px",
+    margin: isPhone ? "10px 16px 12px" : "10px 22px 14px",
     background: "#fff",
     borderRadius: 999,
     padding: "10px 18px",
@@ -949,12 +1106,12 @@ export default function AdminDataRecords() {
     placeItems: "center",
     color: DARK,
     fontWeight: 900,
-    fontSize: 30,
+    fontSize: isPhone ? 22 : 30,
     letterSpacing: 0.5,
   };
 
   const apptHead = {
-    margin: "0 22px",
+    margin: isPhone ? "0 16px" : "0 22px",
     display: "grid",
     gridTemplateColumns: "0.9fr 1.2fr 0.7fr 0.6fr 0.6fr",
     gap: 12,
@@ -969,7 +1126,7 @@ export default function AdminDataRecords() {
     flex: "1 1 auto",
     minHeight: 0,
     overflowY: "auto",
-    padding: "0 22px 18px",
+    padding: isPhone ? "0 16px 16px" : "0 22px 18px",
   };
 
   const apptRow = {
@@ -1010,13 +1167,47 @@ export default function AdminDataRecords() {
     };
   };
 
+  // Phone-friendly appointment card list (patient modal)
+  const apptPhoneCard = {
+    borderRadius: 16,
+    border: "2px solid rgba(255,255,255,.22)",
+    padding: 12,
+    background: "rgba(0,0,0,.10)",
+    marginBottom: 12,
+  };
+
+  const apptPhoneRow = {
+    display: "grid",
+    gridTemplateColumns: isTiny ? "86px 1fr" : "110px 1fr",
+    gap: 10,
+    alignItems: "start",
+    marginBottom: 8,
+  };
+
+  const apptPhoneKey = {
+    fontSize: 12,
+    fontWeight: 900,
+    opacity: 0.9,
+    textTransform: "uppercase",
+    letterSpacing: 0.35,
+  };
+
+  const apptPhoneVal = { fontSize: 13, fontWeight: 800, opacity: 0.95, wordBreak: "break-word" };
+
+  const apptPhoneActions = {
+    display: "grid",
+    gridTemplateColumns: isTiny ? "1fr" : "1fr 1fr",
+    gap: 10,
+    marginTop: 10,
+  };
+
   /* ---------- DIAGNOSTIC RECORD MODAL ---------- */
   const viewBorder = {
     width: "min(1100px, 92vw)",
     height: "min(650px, 82vh)",
     borderRadius: 44,
     background: "rgba(0,0,0,.55)",
-    padding: 10,
+    padding: isPhone ? 8 : 10,
     boxShadow: "0 28px 80px rgba(0,0,0,.55)",
     overflow: "hidden",
   };
@@ -1034,7 +1225,7 @@ export default function AdminDataRecords() {
   };
 
   const viewTop = {
-    padding: "18px 22px 12px",
+    padding: isPhone ? "14px 16px 10px" : "18px 22px 12px",
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
@@ -1044,7 +1235,7 @@ export default function AdminDataRecords() {
 
   const viewName = {
     fontWeight: 900,
-    fontSize: 34,
+    fontSize: isPhone ? 24 : 34,
     lineHeight: 1.05,
     letterSpacing: 0.2,
     textShadow: "0 2px 10px rgba(0,0,0,.35)",
@@ -1075,9 +1266,9 @@ export default function AdminDataRecords() {
   const viewBody = {
     flex: "1 1 auto",
     minHeight: 0,
-    padding: "0 22px 22px",
+    padding: isPhone ? "0 16px 16px" : "0 22px 22px",
     display: "grid",
-    gridTemplateColumns: "1.05fr 0.95fr",
+    gridTemplateColumns: isPhone ? "1fr" : "1.05fr 0.95fr",
     gap: 18,
     overflow: "hidden",
   };
@@ -1087,7 +1278,7 @@ export default function AdminDataRecords() {
   const viewSectionTitle = {
     color: "#fff",
     fontWeight: 900,
-    fontSize: 32,
+    fontSize: isPhone ? 22 : 32,
     margin: "0 0 10px",
   };
 
@@ -1125,6 +1316,7 @@ export default function AdminDataRecords() {
 
   const viewImageFrame = {
     flex: "1 1 auto",
+    minHeight: isPhone ? 240 : undefined,
     borderRadius: 18,
     overflow: "hidden",
     background: "rgba(255,255,255,.08)",
@@ -1152,7 +1344,7 @@ export default function AdminDataRecords() {
     background: "linear-gradient(180deg, rgba(11,61,46,.92) 0%, rgba(47,90,69,.92) 100%)",
     borderRadius: 26,
     boxShadow: "0 26px 70px rgba(0,0,0,.45)",
-    padding: "22px 26px 18px",
+    padding: isPhone ? "16px 16px 14px" : "22px 26px 18px",
     display: "flex",
     flexDirection: "column",
     gap: 12,
@@ -1160,7 +1352,7 @@ export default function AdminDataRecords() {
   };
 
   const modalHeader = { textAlign: "center", color: "#fff", lineHeight: 1.05, marginTop: 2 };
-  const modalTitle = { fontSize: 40, fontWeight: 900, margin: 0 };
+  const modalTitle = { fontSize: isPhone ? 28 : 40, fontWeight: 900, margin: 0 };
   const modalSub = { margin: "6px 0 0", fontSize: 14, opacity: 0.9, fontWeight: 700 };
 
   const modalInner = { flex: 1, overflow: "auto", paddingRight: 6 };
@@ -1183,6 +1375,7 @@ export default function AdminDataRecords() {
     fontWeight: 900,
     textDecoration: "none",
     border: `2px solid ${DARK}`,
+    cursor: "pointer",
   };
 
   const closeBtn = {
@@ -1199,13 +1392,352 @@ export default function AdminDataRecords() {
     cursor: "pointer",
   };
 
-  const SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon },
-    { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon },
-    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon },
-    { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon },
-  ];
+  /* ---------- MODAL ELEMENTS (shared) ---------- */
+  const patientModalEl =
+    patientModalOpen && selectedGroup ? (
+      <div style={overlayPatient} onClick={closePatientModal} role="dialog" aria-modal="true" aria-label="Patient records">
+        <div style={patientBorder} onClick={(e) => e.stopPropagation()}>
+          <div style={patientModal}>
+            <div style={patientTop}>
+              <div style={{ minWidth: 0 }}>
+                <div style={patientName}>{selectedGroup.name || "—"}</div>
+
+                {(() => {
+                  const p = selectedGroup.patient || null;
+                  const pid = selectedGroup.key;
+
+                  const dob = getPatientDobObj(p);
+                  const age = calcAge(dob);
+                  const dobText = dob ? dob.toLocaleDateString() : "—";
+
+                  const sex = getPatientSex(p) || "—";
+                  const contact = getPatientContact(p) || "—";
+                  const email = getPatientEmail(p) || "—";
+
+                  return (
+                    <div style={patientInfoRow}>
+                      <div style={infoCol}>
+                        <div>
+                          <div style={infoLabel}>Patient ID</div>
+                          <div style={infoValue}>{pid}</div>
+                        </div>
+
+                        <div>
+                          <div style={infoLabel}>Birthdate</div>
+                          <div style={infoValue}>
+                            {dobText}
+                            {Number.isFinite(age) ? ` • ${age} years old` : ""}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={infoCol}>
+                        <div>
+                          <div style={infoLabel}>M/F</div>
+                          <div style={infoValue}>{sex}</div>
+                        </div>
+
+                        <div>
+                          <div style={infoLabel}>Contact Number</div>
+                          <div style={infoValue}>{contact}</div>
+                        </div>
+
+                        <div>
+                          <div style={infoLabel}>Email Address</div>
+                          <div style={infoValue}>{email}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <button type="button" style={closeX} onClick={closePatientModal} aria-label="Close">
+                ✕
+              </button>
+            </div>
+
+            <div style={apptPill}>APPOINTMENTS</div>
+
+            {!isPhone ? (
+              <>
+                <div style={apptHead}>
+                  <div>Date</div>
+                  <div>Procedure</div>
+                  <div>Status</div>
+                  <div>Receipt</div>
+                  <div />
+                </div>
+
+                <div style={apptBody}>
+                  {selectedGroup.records.map((a) => {
+                    const apptId = a._id;
+                    const dt = toDateObj(a);
+                    const dateText = dt ? dt.toLocaleDateString() : "—";
+                    const proc = a.procedure || "—";
+                    const status = a.status || "Completed";
+
+                    const meta = billMeta?.[apptId];
+                    const receiptUrl = meta?.receiptUrl || "";
+                    const metaReady = meta !== undefined || !metaLoading;
+
+                    return (
+                      <div key={apptId} style={apptRow}>
+                        <div>{dateText}</div>
+                        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proc}</div>
+                        <div>
+                          <span style={statusPill(status)}>{status}</span>
+                        </div>
+
+                        <div>
+                          {!metaReady ? (
+                            <span style={{ opacity: 0.85, fontWeight: 900 }}>Loading…</span>
+                          ) : receiptUrl ? (
+                            <button type="button" style={apptBtn(false, "white")} onClick={() => openReceiptModal(receiptUrl)}>
+                              View Receipt
+                            </button>
+                          ) : (
+                            <span style={{ opacity: 0.85, fontWeight: 900 }}>—</span>
+                          )}
+                        </div>
+
+                        <div>
+                          <button type="button" style={apptBtn(false, "white")} onClick={() => openView(a)}>
+                            View
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div style={apptBody}>
+                {selectedGroup.records.map((a) => {
+                  const apptId = a._id;
+                  const dt = toDateObj(a);
+                  const dateText = dt ? dt.toLocaleDateString() : "—";
+                  const proc = a.procedure || "—";
+                  const status = a.status || "Completed";
+
+                  const meta = billMeta?.[apptId];
+                  const receiptUrl = meta?.receiptUrl || "";
+                  const metaReady = meta !== undefined || !metaLoading;
+
+                  return (
+                    <div key={apptId} style={apptPhoneCard}>
+                      <div style={apptPhoneRow}>
+                        <div style={apptPhoneKey}>Date</div>
+                        <div style={apptPhoneVal}>{dateText}</div>
+                      </div>
+
+                      <div style={apptPhoneRow}>
+                        <div style={apptPhoneKey}>Procedure</div>
+                        <div style={apptPhoneVal}>{proc}</div>
+                      </div>
+
+                      <div style={apptPhoneRow}>
+                        <div style={apptPhoneKey}>Status</div>
+                        <div>
+                          <span style={statusPill(status)}>{status}</span>
+                        </div>
+                      </div>
+
+                      <div style={apptPhoneActions}>
+                        {!metaReady ? (
+                          <button type="button" style={apptBtn(true, "white")} disabled>
+                            Loading…
+                          </button>
+                        ) : receiptUrl ? (
+                          <button type="button" style={apptBtn(false, "white")} onClick={() => openReceiptModal(receiptUrl)}>
+                            View Receipt
+                          </button>
+                        ) : (
+                          <button type="button" style={apptBtn(true, "white")} disabled>
+                            No Receipt
+                          </button>
+                        )}
+
+                        <button type="button" style={apptBtn(false, "white")} onClick={() => openView(a)}>
+                          View Record
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    ) : null;
+
+  const viewModalEl =
+    viewOpen && viewItem
+      ? (() => {
+          const patient = viewItem.patientId || null;
+
+          const name = getPatientNameValue(patient);
+          const pid = getPatientIdValue(patient);
+
+          const dob = getPatientDobObj(patient);
+          const age = calcAge(dob);
+          const dobText = dob ? dob.toLocaleDateString() : "";
+
+          const apptDate = toDateObj(viewItem)?.toLocaleDateString() || "—";
+          const proc = viewItem.procedure || "—";
+
+          const imgUrl = getFirstDiagnosticUrl(viewItem);
+          const fileUrl = viewItem.resultPdfUrl || ""; // PDF or DICOM now
+
+          const canShowImg = !!imgUrl && !isPdfUrl(imgUrl) && !isDicomUrl(imgUrl);
+          const canShowPdf = !canShowImg && !!fileUrl && isPdfUrl(fileUrl);
+          const isDicom = !canShowImg && !!fileUrl && isDicomUrl(fileUrl);
+
+          const fullTarget = imgUrl || fileUrl;
+
+          const onViewFull = () => {
+            if (fullTarget) openInNewTab(fullTarget);
+          };
+
+          return (
+            <div style={overlayView} onClick={closeView} role="dialog" aria-modal="true" aria-label="View record">
+              <div style={viewBorder} onClick={(e) => e.stopPropagation()}>
+                <div style={viewModal}>
+                  <div style={viewTop}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={viewName}>{name}</div>
+
+                      <div style={viewMetaRow}>
+                        <div style={viewMeta}>
+                          <div style={viewMetaLabel}>Patient ID</div>
+                          <div style={viewMetaValue}>{pid}</div>
+                        </div>
+
+                        {dob ? (
+                          <div style={viewMeta}>
+                            <div style={viewMetaLabel}>Birthdate</div>
+                            <div style={viewMetaValue}>
+                              {dobText}
+                              {Number.isFinite(age) ? ` • ${age} years old` : ""}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div style={viewMeta}>
+                          <div style={viewMetaLabel}>Date</div>
+                          <div style={viewMetaValue}>{apptDate}</div>
+                        </div>
+
+                        <div style={viewMeta}>
+                          <div style={viewMetaLabel}>Procedure</div>
+                          <div style={viewMetaValue}>{proc}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button type="button" style={viewCloseBtn} onClick={closeView} aria-label="Close">
+                      ✕
+                    </button>
+                  </div>
+
+                  <div style={viewBody}>
+                    <div style={viewLeft}>
+                      <div style={viewSectionTitle}>Interpretation and Diagnosis</div>
+
+                      <div style={viewLinedBox}>{viewItem.resultNotes ? String(viewItem.resultNotes) : "—"}</div>
+
+                      <div style={viewBtnRow}>
+                        {viewItem?._id ? (
+                          <button
+                            type="button"
+                            style={viewActionBtn}
+                            onClick={() => {
+                              closeView();
+                              nav(`/admin/report/${viewItem._id}`);
+                            }}
+                          >
+                            <PrinterIcon size={18} />
+                            Open Full Report
+                          </button>
+                        ) : (
+                          <button type="button" style={{ ...viewActionBtn, opacity: 0.6, cursor: "not-allowed" }} disabled>
+                            <PrinterIcon size={18} />
+                            Open Full Report
+                          </button>
+                        )}
+
+                        <button type="button" style={viewActionBtn} onClick={onViewFull} disabled={!fullTarget}>
+                          {isDicom ? "Download DICOM" : "View Full Image"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={viewRight}>
+                      <div style={viewImageFrame}>
+                        {canShowImg ? (
+                          <img src={imgUrl} alt="Diagnostic" style={viewPreviewImg} />
+                        ) : canShowPdf ? (
+                          <iframe src={fileUrl} title="Result PDF" style={viewPreviewFrame} />
+                        ) : isDicom ? (
+                          <div style={{ ...viewEmpty, textAlign: "center" }}>
+                            <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>DICOM preview not supported</div>
+                            <div style={{ fontSize: 13, fontWeight: 800, opacity: 0.95, lineHeight: 1.4 }}>
+                              This file is a DICOM (.dcm). Browsers can’t render it here.
+                              <br />
+                              Click <b>Download DICOM</b> to download/open it in a DICOM viewer.
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={viewEmpty}>No image/PDF available</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()
+      : null;
+
+  const receiptModalEl =
+    receiptOpen && receiptUrlView ? (
+      <div style={overlayReceipt} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
+        <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
+          <div style={modalHeader}>
+            <h2 style={modalTitle}>Receipt</h2>
+            <div style={modalSub}>Preview receipt (PDF/Image)</div>
+          </div>
+
+          <div style={modalInner}>
+            <div style={card}>
+              {isPdfUrl(receiptUrlView) ? (
+                <iframe
+                  src={receiptUrlView}
+                  title="Receipt PDF"
+                  style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
+                />
+              ) : (
+                <div style={{ display: "grid", placeItems: "center" }}>
+                  <img src={receiptUrlView} alt="Receipt" style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }} />
+                </div>
+              )}
+
+              <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+                <button type="button" style={closeBtn} onClick={closeReceiptModal}>
+                  Close
+                </button>
+
+                <button type="button" style={linkBtn} onClick={() => openInNewTab(receiptUrlView)}>
+                  Open in new tab
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null;
 
   if (checkingAdmin) {
     return (
@@ -1215,6 +1747,209 @@ export default function AdminDataRecords() {
     );
   }
 
+  /* =========================================================
+     NEW LAYOUT (Mobile/Tablet) — same format as before
+     ========================================================= */
+  if (isNarrow) {
+    const rootClass = ["profileShell", "narrow", drawerOpen ? "drawerOpen" : ""].filter(Boolean).join(" ");
+
+    return (
+      <div className={rootClass} style={{ "--dark": DARK, "--bg": BG }}>
+        <div className="profileBackdrop" onClick={() => setDrawerOpen(false)} aria-hidden={!drawerOpen} />
+
+        <aside className="profileSidebar" aria-label="Sidebar navigation">
+          <div className="sideHeader">
+            <div className="brandRow">
+              <div className="brandIcon">
+                <BrandIcon size={22} />
+              </div>
+              <div className="brandText">AXIS</div>
+            </div>
+
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
+              ✕
+            </button>
+          </div>
+
+          <nav className="navWrap">
+            {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+              const active = isItemActive(to, exact);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={["navLink", active ? "active" : "", "expanded"].filter(Boolean).join(" ")}
+                  title={label}
+                  aria-current={active ? "page" : undefined}
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  <span className="navIcon" aria-hidden="true">
+                    <IconComp size={20} />
+                  </span>
+                  <span className="navLabel">{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+
+          <div style={{ flex: 1 }} />
+
+          <div className="sideFooter">
+            <div className="footerRow">
+              <MailIcon size={18} />
+              <span>slsu.radiology@gmail.com</span>
+            </div>
+            <div className="footerRow">
+              <BrandIcon size={18} />
+              <span>SLSU Radiology</span>
+            </div>
+            <div className="footerRow">
+              <PhoneIcon size={18} />
+              <span>(042)540-6638</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="profileMain">
+          <header className="topbar">
+            <div className="topbarInner">
+              <div className="topTitleWrap">
+                <button
+                  type="button"
+                  className="burger"
+                  title="Menu"
+                  onClick={() => setDrawerOpen((v) => !v)}
+                  aria-label="Open menu"
+                >
+                  ☰
+                </button>
+
+                <div>
+                  <div className="homeTitle">Data Records</div>
+                  <div className="homeSub">Manage and view all diagnostic results</div>
+                </div>
+              </div>
+
+              <div className="rightTop" ref={menuRef}>
+                <div className="patientIdWrap">
+                  <div className="patientIdLabel">{idLabelText}</div>
+                  <div className="patientIdValue">{adminIdShort}</div>
+                </div>
+
+                <button
+                  type="button"
+                  className="profileToggleBtn"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  title="Account menu"
+                >
+                  <img src={adminProfile?.avatarUrl || "/default-avatar.png"} alt="Avatar" className="avatar" />
+                  <div className="chevronBox">{menuOpen ? "▴" : "▾"}</div>
+                </button>
+
+                {menuOpen ? (
+                  <div className="dropdown" role="menu" aria-label="Account menu">
+                    <div className="ddName">{adminFullName || "Admin"}</div>
+                    <div className="ddSub">{idLabelText}</div>
+                    <div className="ddId">{adminIdShort}</div>
+
+                    <div className="ddDivider" />
+
+                    <div className="ddActions">
+                      <button type="button" className="ddBtn ddBtnGhost" onClick={logout}>
+                        <span aria-hidden="true">⎋</span>
+                        Sign Out
+                      </button>
+
+                      <Link to="/profile/edit" className="ddBtn ddBtnSolid" onClick={() => setMenuOpen(false)}>
+                        <span aria-hidden="true">✎</span>
+                        Edit Profile
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <div className="content">
+            <div className="contentInner" style={nWrap}>
+              {msg ? <div style={msgBox}>{msg}</div> : null}
+
+              <div style={nPanel}>
+                <div style={nTop}>
+                  <div style={nSearchPill}>
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search patient, ID, or procedure"
+                      style={nSearchInput}
+                    />
+                    <div style={{ color: DARK }}>
+                      <SearchIcon size={20} />
+                    </div>
+                  </div>
+
+                  <select value={sort} onChange={(e) => setSort(e.target.value)} style={nSortSelect}>
+                    <option value="Newest">Sort: Newest</option>
+                    <option value="Oldest">Sort: Oldest</option>
+                    <option value="Name A-Z">Sort: Name A-Z</option>
+                    <option value="Name Z-A">Sort: Name Z-A</option>
+                  </select>
+                </div>
+
+                <div style={nList}>
+                  {loading ? (
+                    <div style={{ padding: "10px 4px", color: "#64748b", fontWeight: 800 }}>Loading records...</div>
+                  ) : filteredPatients.length === 0 ? (
+                    <div style={{ padding: "10px 4px", color: "#64748b", fontWeight: 800 }}>No patients found.</div>
+                  ) : (
+                    filteredPatients.map((g) => (
+                      <div key={g.key} style={nCard}>
+                        <div style={nRow}>
+                          <div style={nKey}>Patient</div>
+                          <div style={nVal}>{g.name || "—"}</div>
+                        </div>
+
+                        <div style={nRow}>
+                          <div style={nKey}>Patient ID</div>
+                          <div style={nVal}>{g.key || "—"}</div>
+                        </div>
+
+                        <div style={{ ...nRow, marginBottom: 0 }}>
+                          <div style={nKey}>Records</div>
+                          <div style={nVal}>{g.records.length}</div>
+                        </div>
+
+                        <div style={nActions}>
+                          <button type="button" style={actionBtn(false)} onClick={() => openPatientModal(g.key)}>
+                            View Records
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>
+                RISWebApp • Admin
+              </div>
+            </div>
+          </div>
+
+          {patientModalEl}
+          {viewModalEl}
+          {receiptModalEl}
+        </main>
+      </div>
+    );
+  }
+
+  /* =========================================================
+     OLD LAYOUT (Desktop/Laptop) — original inline-styled UI
+     ========================================================= */
   return (
     <div style={shell}>
       {/* LEFT SIDEBAR */}
@@ -1241,12 +1976,12 @@ export default function AdminDataRecords() {
         </div>
 
         <nav style={navWrap}>
-          {SIDE_ITEMS.map(({ label: lbl, to, IconComp }) => {
-            const active = loc.pathname === to || loc.pathname.startsWith(`${to}/`);
+          {SIDE_ITEMS.map(({ label, to, IconComp, exact }) => {
+            const active = isItemActive(to, exact);
 
             if (!sideOpen) {
               return (
-                <Link key={to} to={to} style={navItemClosedWrap} title={lbl}>
+                <Link key={to} to={to} style={navItemClosedWrap} title={label}>
                   <div style={navIconBtn(active)}>
                     <IconComp size={20} />
                   </div>
@@ -1257,7 +1992,7 @@ export default function AdminDataRecords() {
             return (
               <Link key={to} to={to} style={navItemOpen(active)}>
                 <IconComp size={20} />
-                <span>{lbl}</span>
+                <span>{label}</span>
               </Link>
             );
           })}
@@ -1403,298 +2138,9 @@ export default function AdminDataRecords() {
           </div>
         </div>
 
-        {/* PATIENT RECORDS MODAL */}
-        {patientModalOpen && selectedGroup ? (
-          <div style={overlayPatient} onClick={closePatientModal} role="dialog" aria-modal="true" aria-label="Patient records">
-            <div style={patientBorder} onClick={(e) => e.stopPropagation()}>
-              <div style={patientModal}>
-                <div style={patientTop}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={patientName}>{selectedGroup.name || "—"}</div>
-
-                    {(() => {
-                      const p = selectedGroup.patient || null;
-                      const pid = selectedGroup.key;
-
-                      const dob = getPatientDobObj(p);
-                      const age = calcAge(dob);
-                      const dobText = dob ? dob.toLocaleDateString() : "—";
-
-                      const sex = getPatientSex(p) || "—";
-                      const contact = getPatientContact(p) || "—";
-                      const email = getPatientEmail(p) || "—";
-
-                      return (
-                        <div style={patientInfoRow}>
-                          <div style={infoCol}>
-                            <div>
-                              <div style={infoLabel}>Patient ID</div>
-                              <div style={infoValue}>{pid}</div>
-                            </div>
-
-                            <div>
-                              <div style={infoLabel}>Birthdate</div>
-                              <div style={infoValue}>
-                                {dobText}
-                                {Number.isFinite(age) ? ` • ${age} years old` : ""}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div style={infoCol}>
-                            <div>
-                              <div style={infoLabel}>M/F</div>
-                              <div style={infoValue}>{sex}</div>
-                            </div>
-
-                            <div>
-                              <div style={infoLabel}>Contact Number</div>
-                              <div style={infoValue}>{contact}</div>
-                            </div>
-
-                            <div>
-                              <div style={infoLabel}>Email Address</div>
-                              <div style={infoValue}>{email}</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <button type="button" style={closeX} onClick={closePatientModal} aria-label="Close">
-                    ✕
-                  </button>
-                </div>
-
-                <div style={apptPill}>APPOINTMENTS</div>
-
-                <div style={apptHead}>
-                  <div>Date</div>
-                  <div>Procedure</div>
-                  <div>Status</div>
-                  <div>Receipt</div>
-                  <div />
-                </div>
-
-                <div style={apptBody}>
-                  {selectedGroup.records.map((a) => {
-                    const apptId = a._id;
-                    const dt = toDateObj(a);
-                    const dateText = dt ? dt.toLocaleDateString() : "—";
-                    const proc = a.procedure || "—";
-                    const status = a.status || "Completed";
-
-                    const meta = billMeta?.[apptId];
-                    const receiptUrl = meta?.receiptUrl || "";
-                    const metaReady = meta !== undefined || !metaLoading;
-
-                    return (
-                      <div key={apptId} style={apptRow}>
-                        <div>{dateText}</div>
-                        <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{proc}</div>
-                        <div>
-                          <span style={statusPill(status)}>{status}</span>
-                        </div>
-
-                        {/* Receipt column (View only, no Upload) */}
-                        <div>
-                          {!metaReady ? (
-                            <span style={{ opacity: 0.85, fontWeight: 900 }}>Loading…</span>
-                          ) : receiptUrl ? (
-                            <button type="button" style={apptBtn(false, "white")} onClick={() => openReceiptModal(receiptUrl)}>
-                              View Receipt
-                            </button>
-                          ) : (
-                            <span style={{ opacity: 0.85, fontWeight: 900 }}>—</span>
-                          )}
-                        </div>
-
-                        <div>
-                          <button type="button" style={apptBtn(false, "white")} onClick={() => openView(a)}>
-                            View
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {/* DIAGNOSTIC RECORD MODAL */}
-        {viewOpen && viewItem
-          ? (() => {
-              const patient = viewItem.patientId || null;
-
-              const name = getPatientNameValue(patient);
-              const pid = getPatientIdValue(patient);
-
-              const dob = getPatientDobObj(patient);
-              const age = calcAge(dob);
-              const dobText = dob ? dob.toLocaleDateString() : "";
-
-              const apptDate = toDateObj(viewItem)?.toLocaleDateString() || "—";
-              const proc = viewItem.procedure || "—";
-
-              const imgUrl = getFirstDiagnosticUrl(viewItem);
-              const fileUrl = viewItem.resultPdfUrl || ""; // PDF or DICOM now
-
-              const canShowImg = !!imgUrl && !isPdfUrl(imgUrl) && !isDicomUrl(imgUrl);
-              const canShowPdf = !canShowImg && !!fileUrl && isPdfUrl(fileUrl);
-              const isDicom = !canShowImg && !!fileUrl && isDicomUrl(fileUrl);
-
-              const fullTarget = imgUrl || fileUrl;
-
-              const onViewFull = () => {
-                if (fullTarget) openInNewTab(fullTarget);
-              };
-
-              return (
-                <div style={overlayView} onClick={closeView} role="dialog" aria-modal="true" aria-label="View record">
-                  <div style={viewBorder} onClick={(e) => e.stopPropagation()}>
-                    <div style={viewModal}>
-                      <div style={viewTop}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={viewName}>{name}</div>
-
-                          <div style={viewMetaRow}>
-                            <div style={viewMeta}>
-                              <div style={viewMetaLabel}>Patient ID</div>
-                              <div style={viewMetaValue}>{pid}</div>
-                            </div>
-
-                            {dob ? (
-                              <div style={viewMeta}>
-                                <div style={viewMetaLabel}>Birthdate</div>
-                                <div style={viewMetaValue}>
-                                  {dobText}
-                                  {Number.isFinite(age) ? ` • ${age} years old` : ""}
-                                </div>
-                              </div>
-                            ) : null}
-
-                            <div style={viewMeta}>
-                              <div style={viewMetaLabel}>Date</div>
-                              <div style={viewMetaValue}>{apptDate}</div>
-                            </div>
-
-                            <div style={viewMeta}>
-                              <div style={viewMetaLabel}>Procedure</div>
-                              <div style={viewMetaValue}>{proc}</div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <button type="button" style={viewCloseBtn} onClick={closeView} aria-label="Close">
-                          ✕
-                        </button>
-                      </div>
-
-                      <div style={viewBody}>
-                        <div style={viewLeft}>
-                          <div style={viewSectionTitle}>Interpretation and Diagnosis</div>
-
-                          <div style={viewLinedBox}>{viewItem.resultNotes ? String(viewItem.resultNotes) : "—"}</div>
-
-                          {/* ✅ Open Full Report goes to ADMIN report route */}
-                          <div style={viewBtnRow}>
-                            {viewItem?._id ? (
-                              <button
-                                type="button"
-                                style={viewActionBtn}
-                                onClick={() => {
-                                  closeView();
-                                  nav(`/admin/report/${viewItem._id}`);
-                                }}
-                              >
-                                <PrinterIcon size={18} />
-                                Open Full Report
-                              </button>
-                            ) : (
-                              <button type="button" style={{ ...viewActionBtn, opacity: 0.6, cursor: "not-allowed" }} disabled>
-                                <PrinterIcon size={18} />
-                                Open Full Report
-                              </button>
-                            )}
-
-                            <button type="button" style={viewActionBtn} onClick={onViewFull} disabled={!fullTarget}>
-                              {isDicom ? "Download DICOM" : "View Full Image"}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div style={viewRight}>
-                          <div style={viewImageFrame}>
-                            {canShowImg ? (
-                              <img src={imgUrl} alt="Diagnostic" style={viewPreviewImg} />
-                            ) : canShowPdf ? (
-                              <iframe src={fileUrl} title="Result PDF" style={viewPreviewFrame} />
-                            ) : isDicom ? (
-                              <div style={{ ...viewEmpty, textAlign: "center" }}>
-                                <div style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>DICOM preview not supported</div>
-                                <div style={{ fontSize: 13, fontWeight: 800, opacity: 0.95, lineHeight: 1.4 }}>
-                                  This file is a DICOM (.dcm). Browsers can’t render it here.
-                                  <br />
-                                  Click <b>Download DICOM</b> to download/open it in a DICOM viewer.
-                                </div>
-                              </div>
-                            ) : (
-                              <div style={viewEmpty}>No image/PDF available</div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()
-          : null}
-
-        {/* RECEIPT MODAL */}
-        {receiptOpen && receiptUrlView ? (
-          <div style={overlayReceipt} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
-            <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
-              <div style={modalHeader}>
-                <h2 style={modalTitle}>Receipt</h2>
-                <div style={modalSub}>Preview receipt (PDF/Image)</div>
-              </div>
-
-              <div style={modalInner}>
-                <div style={card}>
-                  {isPdfUrl(receiptUrlView) ? (
-                    <iframe
-                      src={receiptUrlView}
-                      title="Receipt PDF"
-                      style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
-                    />
-                  ) : (
-                    <div style={{ display: "grid", placeItems: "center" }}>
-                      <img
-                        src={receiptUrlView}
-                        alt="Receipt"
-                        style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
-                      />
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-                    <button type="button" style={closeBtn} onClick={closeReceiptModal}>
-                      Close
-                    </button>
-
-                    <button type="button" style={linkBtn} onClick={() => openInNewTab(receiptUrlView)}>
-                      Open in new tab
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
+        {patientModalEl}
+        {viewModalEl}
+        {receiptModalEl}
       </main>
     </div>
   );

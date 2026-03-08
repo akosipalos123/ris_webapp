@@ -12,20 +12,17 @@ const adminRoutes = require("./routes/admin");
 const billsRoutes = require("./routes/bills");
 const configRoutes = require("./routes/configRoutes");
 
-// ✅ Password reset routes (forgot/reset password)
 const passwordResetRoutes = require("./routes/passwordResetRoutes");
 
-// ✅ Admin auth + invite + admin user management routes
 const adminAuthRoutes = require("./routes/adminAuth");
 const adminInvitesRoutes = require("./routes/adminInvites");
 const adminUsersRoutes = require("./routes/adminUsers");
+const adminBillsRouter = require("./routes/adminBills");
 
 const app = express();
 
 /**
  * ✅ CORS
- * FRONTEND_URL supports comma-separated values:
- * FRONTEND_URL=https://axis-bsrt.slsu.com,https://www.axis-bsrt.slsu.com
  */
 const allowedOrigins = [
   ...(process.env.FRONTEND_URL ? String(process.env.FRONTEND_URL).split(",") : []),
@@ -37,12 +34,8 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, cb) => {
-    // allow curl/postman / server-to-server
     if (!origin) return cb(null, true);
-
     if (allowedOrigins.includes(origin)) return cb(null, true);
-
-    // ✅ IMPORTANT: do NOT throw (throwing can cause OPTIONS to become 500)
     return cb(null, false);
   },
   credentials: true,
@@ -51,33 +44,33 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-// ✅ IMPORTANT: Express/router in your setup does NOT accept "*".
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-// ✅ Put reset routes FIRST so they cannot be blocked by any auth router fallback/middleware
+// ✅ Put reset routes FIRST
 app.use("/api/auth", passwordResetRoutes);
 
-// ✅ Patient auth + patient-facing APIs (includes POST /api/auth/google now)
+// ✅ Patient routes
 app.use("/api/auth", authRoutes);
 app.use("/api/appointments", appointmentsRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/bills", billsRoutes);
 app.use("/api/config", configRoutes);
 
-// ✅ Admin auth + superadmin features (mount BEFORE /api/admin)
+// ✅ Admin auth + management routes
 app.use("/api/admin/auth", adminAuthRoutes);
 app.use("/api/admin/invites", adminInvitesRoutes);
 app.use("/api/admin/users", adminUsersRoutes);
 
-// ✅ Existing admin APIs (appointments/billing/etc)
+// ✅ IMPORTANT: mount /api/admin/bills BEFORE /api/admin
+app.use("/api/admin/bills", adminBillsRouter);
+
+// ✅ Existing admin APIs
 app.use("/api/admin", adminRoutes);
 
 // ✅ centralized error handler (keep LAST)
@@ -89,7 +82,6 @@ app.use((err, req, res, next) => {
 async function start() {
   try {
     if (!process.env.MONGODB_URI) throw new Error("Missing MONGODB_URI in .env");
-
     await mongoose.connect(process.env.MONGODB_URI);
 
     console.log("Connected to MongoDB");

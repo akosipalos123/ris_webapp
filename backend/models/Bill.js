@@ -54,9 +54,18 @@ const billSchema = new mongoose.Schema(
     // optional: link to receipt (admin upload or reuse resultPdfUrl)
     receiptUrl: { type: String, trim: true, default: "" },
 
+    // backend/models/Bill.js  (only replace the status field)
     status: {
       type: String,
-      enum: ["Pending", "Unpaid", "Paid", "Voided"],
+      enum: [
+        "Pending",
+        "Unpaid",
+        "For Confirmation",
+        "Paid",
+        "University Guarantee - Research",
+        "University Guarantee - Medical",
+        "Voided",
+      ],
       default: "Pending",
       index: true,
     },

@@ -1,14 +1,18 @@
-// frontend/src/pages/AdminAppointments.jsx
+// frontend/src/pages/AdminAppointmentBooking.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiUpload, apiPatch } from "../api";
+import { apiGet, apiPatch, apiUpload } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import {
-  XRAY_BILLING_ITEMS,
-  formatPhp,
-  findXrayBillingByLabel,
-} from "../constants/procedures";
+import { XRAY_BILLING_ITEMS, formatPhp, findXrayBillingByLabel } from "../constants/procedures";
 
-const STATUSES = ["Pending", "Approved", "Rejected", "Cancelled", "Completed"];
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+const PAYMENT_STATUSES = [
+  "Unpaid",
+  "For Confirmation",
+  "Paid",
+  "University Guarantee - Research",
+  "University Guarantee - Medical",
+];
 
 /* ---------- ICONS (SVG) ---------- */
 function Icon({ children, size = 20 }) {
@@ -68,6 +72,19 @@ const PatientIcon = (p) => (
   </Icon>
 );
 
+const MailIcon = (p) => (
+  <Icon {...p}>
+    <path d="M4 6h16v12H4z" />
+    <path d="m4 7 8 6 8-6" />
+  </Icon>
+);
+
+const PhoneIcon = (p) => (
+  <Icon {...p}>
+    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.7a2 2 0 0 1-.5 2.1L8.1 9.6a16 16 0 0 0 6.3 6.3l1.1-1.1a2 2 0 0 1 2.1-.5c.9.3 1.8.5 2.7.6A2 2 0 0 1 22 16.9z" />
+  </Icon>
+);
+
 /* ---------- HELPERS ---------- */
 function toDateObj(a) {
   if (a?.date) {
@@ -81,30 +98,31 @@ function toDateObj(a) {
   return null;
 }
 
-function safeName(p) {
-  if (!p || typeof p !== "object") return "—";
-  const first = p.firstName || "";
-  const last = p.lastName || "";
-  const full = `${first} ${last}`.trim();
-  return full || "—";
-}
-
 function shortId(id) {
   if (!id) return "—";
   return String(id).slice(-8).toUpperCase();
 }
 
-// ✅ Prefer BSRT ID if populated, else fallback to _id short
+function fullNameProfileStyle(p) {
+  if (!p || typeof p !== "object") return "—";
+  const base = [p.lastName, p.firstName, p.middleName].filter(Boolean).join(", ");
+  const out = `${base}${p.suffix ? `, ${p.suffix}` : ""}`.trim();
+  return out || "—";
+}
+
 function getPatientIdValue(patient) {
   if (!patient) return "—";
   if (typeof patient === "object") {
     if (patient?.bsrtId) return String(patient.bsrtId).trim();
-    if (patient?.bsrtID) return String(patient.bsrtID).trim(); // optional alt casing
+    if (patient?.bsrtID) return String(patient.bsrtID).trim();
     if (patient?._id) return shortId(patient._id);
     return "—";
   }
-  // patientId not populated (string ObjectId)
   return shortId(patient);
+}
+
+function getAuthTokenAny() {
+  return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
 }
 
 function getRoleClean(me) {
@@ -116,11 +134,6 @@ function isAdminUser(me) {
   return me?.isAdmin === true || r === "admin" || r === "superadmin";
 }
 
-function getAuthTokenAny() {
-  // Prefer adminToken if present; fallback to patient token
-  return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
-}
-
 function isPdfUrl(url) {
   const raw = String(url || "");
   const noQuery = raw.split("?")[0].toLowerCase();
@@ -128,59 +141,81 @@ function isPdfUrl(url) {
   return noQuery.endsWith(".pdf") || noQuery.includes(".pdf") || lower.includes("format=pdf");
 }
 
-export default function AdminAppointments() {
+function normalizeFileUrl(u) {
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("data:")) return u;
+  if (u.startsWith("/")) return `${API_URL}${u}`;
+  return `${API_URL}/${u}`;
+}
+
+function normalizePaymentStatus(rawStatus, hasReceipt) {
+  const raw = String(rawStatus || "").trim();
+  const lower = raw.toLowerCase();
+
+  if (!raw) return hasReceipt ? "For Confirmation" : "Unpaid";
+  if (lower === "pending" || lower === "unpaid") return hasReceipt ? "For Confirmation" : "Unpaid";
+
+  for (const s of PAYMENT_STATUSES) {
+    if (s.toLowerCase() === lower) return s;
+  }
+
+  if (lower.includes("university guarantee") && lower.includes("research")) return "University Guarantee - Research";
+  if (lower.includes("university guarantee") && lower.includes("medical")) return "University Guarantee - Medical";
+
+  return hasReceipt ? "For Confirmation" : "Unpaid";
+}
+
+function getReceiptRawFromBill(b) {
+  return (
+    b?.receiptUrl ||
+    b?.receiptPath ||
+    b?.receipt ||
+    b?.fileUrl ||
+    b?.url ||
+    b?.invoiceUrl ||
+    b?.invoicePath ||
+    ""
+  );
+}
+
+export default function AdminAppointmentBooking() {
   const nav = useNavigate();
   const loc = useLocation();
 
   const [msg, setMsg] = useState("");
-  const [loading, setLoading] = useState(true);
   const [checkingAdmin, setCheckingAdmin] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   const [adminProfile, setAdminProfile] = useState(null);
 
+  // Approved appointments
   const [rows, setRows] = useState([]);
-  const [savingId, setSavingId] = useState(null);
 
-  const [filters, setFilters] = useState({
-    status: "All",
-    procedure: "All",
-    date: "",
-  });
+  // { [appointmentId]: bill }
+  const [billsMap, setBillsMap] = useState({});
 
-  // dropdown / sidebar
+  // Filters (status locked to Approved)
+  const [filters, setFilters] = useState({ paymentStatus: "All", date: "" });
+
+  // UI: dropdown / sidebar
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const [sideOpen, setSideOpen] = useState(true);
 
-  // ===== Complete modal state (kept) =====
+  // Payment saving per row
+  const [paySavingId, setPaySavingId] = useState(null);
+
+  // Receipt modal
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptUrlView, setReceiptUrlView] = useState("");
+
+  // Upload Result modal (Complete flow)
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completeAppt, setCompleteAppt] = useState(null);
   const [completePdf, setCompletePdf] = useState(null);
   const [completeNotes, setCompleteNotes] = useState("");
   const [completeSaving, setCompleteSaving] = useState(false);
-
-  // ✅ Billing state
   const [completeBillingCode, setCompleteBillingCode] = useState("");
-
-  // ✅ Request Slip viewer modal state
-  const [slipOpen, setSlipOpen] = useState(false);
-  const [slipUrlView, setSlipUrlView] = useState("");
-
-  function openSlipModal(url) {
-    if (!url) return;
-    setSlipUrlView(url);
-    setSlipOpen(true);
-  }
-
-  function closeSlipModal() {
-    setSlipOpen(false);
-    setSlipUrlView("");
-  }
-
-  function openSlipInNewTab(url) {
-    if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
 
   const selectedBilling = useMemo(() => {
     return XRAY_BILLING_ITEMS.find((x) => x.code === completeBillingCode) || null;
@@ -193,36 +228,31 @@ export default function AdminAppointments() {
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.status && filters.status !== "All") params.set("status", filters.status);
-    if (filters.procedure && filters.procedure !== "All") params.set("procedure", filters.procedure);
+    params.set("status", "Approved");
     if (filters.date) params.set("date", filters.date);
     const s = params.toString();
     return s ? `?${s}` : "";
-  }, [filters]);
+  }, [filters.date]);
 
   async function ensureAdmin() {
     const adminToken = localStorage.getItem("adminToken");
     const token = localStorage.getItem("token");
 
-    // If neither exists, go login
     if (!adminToken && !token) {
       nav("/login");
       return false;
     }
 
-    // Prefer adminToken validation if present
     if (adminToken) {
       try {
         const me = await apiGet("/api/admin/auth/me", adminToken);
         setAdminProfile(me || null);
         return true;
       } catch {
-        // adminToken invalid/expired -> remove and fall back to patient token role check
         localStorage.removeItem("adminToken");
       }
     }
 
-    // Fallback: patient token role check
     if (!token) {
       nav("/login");
       return false;
@@ -231,16 +261,49 @@ export default function AdminAppointments() {
     try {
       const me = await apiGet("/api/auth/me", token);
       setAdminProfile(me || null);
-
       if (!isAdminUser(me)) {
         nav("/profile");
         return false;
       }
       return true;
-    } catch (err) {
-      setMsg(err.message || "Failed to validate admin session");
+    } catch {
       nav("/login");
       return false;
+    }
+  }
+
+  async function loadBillsForAppointments(appointments) {
+    const authToken = getAuthTokenAny();
+    if (!authToken) return;
+
+    const ids = (appointments || [])
+      .map((a) => String(a?._id || "").trim())
+      .filter(Boolean);
+
+    if (!ids.length) {
+      setBillsMap({});
+      return;
+    }
+
+    try {
+      const qs = `?appointmentIds=${encodeURIComponent(ids.join(","))}`;
+      const bills = await apiGet(`/api/admin/bills${qs}`, authToken);
+
+      const map = {};
+      for (const b of Array.isArray(bills) ? bills : []) {
+        const apptField = b?.appointmentId;
+        const apptId =
+          apptField && typeof apptField === "object" && apptField._id
+            ? String(apptField._id)
+            : String(apptField || "");
+
+        if (apptId && !map[apptId]) map[apptId] = b;
+      }
+
+      setBillsMap(map);
+    } catch (err) {
+      setBillsMap({});
+      setMsg(err.message || "Failed to load bills for appointments");
     }
   }
 
@@ -251,11 +314,17 @@ export default function AdminAppointments() {
     try {
       setLoading(true);
       setMsg("");
+
       const data = await apiGet(`/api/admin/appointments${queryString}`, authToken);
-      setRows(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      const approved = list.filter((a) => String(a?.status || "") === "Approved");
+
+      setRows(approved);
+      await loadBillsForAppointments(approved);
     } catch (err) {
       setMsg(err.message || "Request failed");
       setRows([]);
+      setBillsMap({});
     } finally {
       setLoading(false);
     }
@@ -297,15 +366,16 @@ export default function AdminAppointments() {
     };
   }, [menuOpen]);
 
-  // close slip modal on ESC
+  // close receipt modal on ESC
   useEffect(() => {
-    if (!slipOpen) return;
+    if (!receiptOpen) return;
     const onKey = (e) => {
-      if (e.key === "Escape") closeSlipModal();
+      if (e.key === "Escape") closeReceiptModal();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [slipOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiptOpen]);
 
   function logout() {
     setMenuOpen(false);
@@ -315,39 +385,54 @@ export default function AdminAppointments() {
     nav("/login");
   }
 
-  async function setStatus(apptId, status) {
+  function openReceiptModal(url) {
+    const normalized = normalizeFileUrl(url);
+    if (!normalized) return;
+    setReceiptUrlView(normalized);
+    setReceiptOpen(true);
+  }
+  function closeReceiptModal() {
+    setReceiptOpen(false);
+    setReceiptUrlView("");
+  }
+
+  function openReceiptInNewTab(url) {
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  async function updateBillStatusForAppointment(apptId, billId, nextStatus) {
     const authToken = getAuthTokenAny();
     if (!authToken) return nav("/login");
-
-    if (status === "Cancelled") {
-      const ok = window.confirm("Cancel this appointment?");
-      if (!ok) return;
-    }
-    if (status === "Rejected") {
-      const ok = window.confirm("Reject this appointment?");
-      if (!ok) return;
+    if (!billId) {
+      setMsg("No bill found for this appointment yet.");
+      return;
     }
 
     try {
-      setSavingId(apptId);
       setMsg("");
-      await apiPatch(`/api/admin/appointments/${apptId}/status`, authToken, { status });
-      await load();
+      setPaySavingId(apptId);
+
+      const updated = await apiPatch(`/api/admin/bills/${billId}/status`, authToken, { status: nextStatus });
+
+      setBillsMap((prev) => ({
+        ...prev,
+        [apptId]: { ...(prev[apptId] || {}), ...(updated || {}), status: nextStatus },
+      }));
     } catch (err) {
-      setMsg(err.message || "Update failed");
+      setMsg(err.message || "Failed to update payment status");
     } finally {
-      setSavingId(null);
+      setPaySavingId(null);
     }
   }
 
-  // ===== Complete =====
+  // Upload Result modal (Complete flow)
   function openCompleteModal(appt) {
     setMsg("");
     setCompleteAppt(appt);
     setCompletePdf(null);
     setCompleteNotes("");
 
-    // ✅ Auto-select billing based on what user booked (procedure label)
     const match = findXrayBillingByLabel(appt?.procedure);
     setCompleteBillingCode(match ? match.code : "");
 
@@ -370,7 +455,6 @@ export default function AdminAppointments() {
 
     if (!completeBillingCode) return setMsg("Billing item (procedure done) is required.");
     if (!selectedBilling) return setMsg("Invalid billing selection.");
-
     if (!completeNotes.trim()) return setMsg("Notes are required.");
     if (!completePdf) return setMsg("Result PDF is required.");
     if (completePdf.type !== "application/pdf") return setMsg("File must be a PDF.");
@@ -386,7 +470,6 @@ export default function AdminAppointments() {
       fd.append("resultPdf", completePdf);
       fd.append("notes", completeNotes.trim());
 
-      // ✅ billing fields (sent with completion)
       fd.append("billingCode", selectedBilling.code);
       fd.append("billingLabel", selectedBilling.label);
       fd.append("billingAmount", selectedBilling.fee.toFixed(2));
@@ -395,39 +478,51 @@ export default function AdminAppointments() {
       await apiUpload(`/api/admin/appointments/${completeAppt._id}/complete`, authToken, fd);
 
       closeCompleteModal();
-      await load();
+      await load(); // Completed appt will disappear from Approved list
+      setMsg("Result uploaded and appointment marked as Completed.");
     } catch (err) {
-      setMsg(err.message || "Complete failed");
+      setMsg(err.message || "Upload/Complete failed");
     } finally {
       setCompleteSaving(false);
     }
   }
 
-  // ✅ Admin ID value: prefer bsrtId, fallback to Mongo _id short
   const adminIdShort = useMemo(() => {
     if (adminProfile?.bsrtId) return String(adminProfile.bsrtId).trim();
     if (adminProfile?.bsrtID) return String(adminProfile.bsrtID).trim();
     return shortId(adminProfile?._id);
   }, [adminProfile]);
 
-  /* ---------- ROLE LABEL (match Profile.jsx behavior) ---------- */
   const roleClean = useMemo(() => getRoleClean(adminProfile), [adminProfile]);
   const isSuperAdmin = roleClean === "superadmin";
-  const isAdmin = roleClean === "admin" || isSuperAdmin || adminProfile?.isAdmin === true;
-  const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
+  const idLabelText =
+    roleClean === "admin" || isSuperAdmin || adminProfile?.isAdmin === true
+      ? isSuperAdmin
+        ? "Superadmin ID"
+        : "Admin ID"
+      : "Patient ID";
 
-  const statusOptions = useMemo(() => ["All", ...STATUSES], []);
+  const paymentStatusOptions = useMemo(() => ["All", ...PAYMENT_STATUSES], []);
 
-  // ✅ Auto-fill procedures from what BookAppointment can save + anything already in DB
-  const procedureOptions = useMemo(() => {
-    const s = new Set(XRAY_BILLING_ITEMS.map((x) => x.label));
-    for (const a of rows) if (a?.procedure) s.add(a.procedure); // keep legacy values
-    return ["All", ...Array.from(s)];
-  }, [rows]);
+  const filteredRows = useMemo(() => {
+    const wanted = filters.paymentStatus;
+    if (!wanted || wanted === "All") return rows;
 
-  const busy = loading || checkingAdmin || completeSaving;
+    return (rows || []).filter((a) => {
+      const bill = billsMap?.[String(a._id)] || null;
 
-  /* ---------- STYLES (match screenshot / Synapse theme) ---------- */
+      const receiptRaw = getReceiptRawFromBill(bill);
+      const receiptUrl = normalizeFileUrl(receiptRaw);
+      const hasReceipt = Boolean(receiptUrl);
+
+      const statusRaw = bill?.status || "";
+      const payValue = normalizePaymentStatus(statusRaw, hasReceipt);
+
+      return payValue === wanted;
+    });
+  }, [rows, billsMap, filters.paymentStatus]);
+
+  /* ---------- STYLES ---------- */
   const DARK = "#0b3d2e";
   const BG = "#ffffff";
 
@@ -642,7 +737,7 @@ export default function AdminAppointments() {
   const ddProfileBtn = { ...ddBtnBase, background: "#fff", color: "#0f172a", border: "2px solid rgba(255,255,255,.9)" };
 
   const content = { flex: "1 1 auto", overflow: "auto", paddingRight: 4 };
-  const contentWrap = { maxWidth: 1280 };
+  const contentWrap = { maxWidth: 1440 };
 
   const msgBox = {
     padding: "10px 12px",
@@ -656,7 +751,7 @@ export default function AdminAppointments() {
 
   const filtersBar = {
     display: "grid",
-    gridTemplateColumns: "1.1fr 1.1fr 1fr auto",
+    gridTemplateColumns: "1.2fr 1fr auto",
     gap: 18,
     alignItems: "end",
     marginTop: 6,
@@ -700,15 +795,16 @@ export default function AdminAppointments() {
 
   const tablePanel = { ...panel, minHeight: 620, display: "flex", flexDirection: "column", marginTop: 14 };
 
-  // ✅ Added Request Slip column (6 columns total)
+  const gridCols = "1.8fr 0.9fr 1.1fr 1.1fr 1.2fr 0.75fr 0.85fr";
+
   const tableHeader = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 0.9fr 0.9fr 0.9fr 0.75fr 0.8fr",
+    gridTemplateColumns: gridCols,
     gap: 14,
     padding: "12px 12px",
     fontWeight: 900,
     color: DARK,
-    fontSize: 22,
+    fontSize: 18,
     borderBottom: "2px solid rgba(0,0,0,.45)",
     flex: "0 0 auto",
   };
@@ -717,7 +813,7 @@ export default function AdminAppointments() {
 
   const rowStyle = {
     display: "grid",
-    gridTemplateColumns: "1.2fr 0.9fr 0.9fr 0.9fr 0.75fr 0.8fr",
+    gridTemplateColumns: gridCols,
     gap: 14,
     padding: "14px 12px",
     alignItems: "center",
@@ -726,7 +822,24 @@ export default function AdminAppointments() {
     color: "#0f172a",
   };
 
-  const slipBtn = (disabled) => ({
+  const btnDark = (disabled) => ({
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 2,
+    background: DARK,
+    color: "#fff",
+    border: `2px solid ${DARK}`,
+    fontWeight: 900,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.6 : 1,
+    textDecoration: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    whiteSpace: "nowrap",
+  });
+
+  const btnOutline = (disabled) => ({
     width: "100%",
     padding: "10px 12px",
     borderRadius: 2,
@@ -739,51 +852,23 @@ export default function AdminAppointments() {
     whiteSpace: "nowrap",
   });
 
-  const statusSelectStyle = (status, disabled) => {
-    let bg = "#fff";
-    let color = DARK;
-    let border = `2px solid ${DARK}`;
+  const paymentSelectStyle = (disabled) => ({
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 2,
+    border: `2px solid ${DARK}`,
+    background: "#fff",
+    color: "#0f172a",
+    fontWeight: 900,
+    outline: "none",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.7 : 1,
+    appearance: "none",
+  });
 
-    if (status === "Approved") {
-      bg = DARK;
-      color = "#fff";
-      border = `2px solid ${DARK}`;
-    } else if (status === "Pending") {
-      bg = "#d5a200";
-      color = "#fff";
-      border = "2px solid #b88400";
-    } else if (status === "Cancelled") {
-      bg = "#b91c1c";
-      color = "#fff";
-      border = "2px solid #991b1b";
-    } else if (status === "Rejected") {
-      bg = "#dc2626";
-      color = "#fff";
-      border = "2px solid #b91c1c";
-    } else if (status === "Completed") {
-      bg = "#fff";
-      color = "#0f172a";
-      border = `2px solid ${DARK}`;
-    }
-
-    return {
-      width: "100%",
-      padding: "10px 12px",
-      borderRadius: 2,
-      border,
-      background: bg,
-      color,
-      fontWeight: 900,
-      outline: "none",
-      cursor: disabled ? "not-allowed" : "pointer",
-      opacity: disabled ? 0.7 : 1,
-      appearance: "none",
-    };
-  };
-
-  // Modal styles (Complete + Slip Viewer reuse)
+  // modal styles
   const overlay = {
-    position: "absolute",
+    position: "fixed",
     inset: 0,
     background: "rgba(0,0,0,.55)",
     zIndex: 2000,
@@ -835,7 +920,7 @@ export default function AdminAppointments() {
 
   const modalBtns = { display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", marginTop: 12 };
 
-  const btnDark = (disabled) => ({
+  const bigBtnDark = (disabled) => ({
     padding: "12px 16px",
     borderRadius: 999,
     background: DARK,
@@ -844,10 +929,10 @@ export default function AdminAppointments() {
     fontWeight: 900,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.65 : 1,
-    minWidth: 180,
+    minWidth: 200,
   });
 
-  const btnOutline = (disabled) => ({
+  const bigBtnOutline = (disabled) => ({
     padding: "12px 16px",
     borderRadius: 999,
     background: "#fff",
@@ -856,16 +941,15 @@ export default function AdminAppointments() {
     fontWeight: 900,
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.65 : 1,
-    minWidth: 180,
+    minWidth: 200,
   });
 
-  /* ---------- SIDEBAR ITEMS (UPDATED to match App.jsx routes) ---------- */
   const SIDE_ITEMS = [
-    { label: "Home", to: "/profile", IconComp: HomeIcon },
-    { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon },
-    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon },
+    { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
+    { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
+    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon, exact: true },
     { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon },
+    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
   const isItemActive = (to, exact) => {
@@ -940,7 +1024,7 @@ export default function AdminAppointments() {
         {sideOpen ? (
           <div style={sideFooter}>
             <div style={footerRow}>
-              <span>✉</span>
+              <MailIcon size={18} />
               <span>slsu.radiology@gmail.com</span>
             </div>
             <div style={footerRow}>
@@ -948,7 +1032,7 @@ export default function AdminAppointments() {
               <span>SLSU Radiology</span>
             </div>
             <div style={footerRow}>
-              <span>☎</span>
+              <PhoneIcon size={18} />
               <span>(042)540-6638</span>
             </div>
           </div>
@@ -967,8 +1051,8 @@ export default function AdminAppointments() {
             ) : null}
 
             <div>
-              <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>Appointment Approval</div>
-              <div style={{ opacity: 0.95, fontSize: 14 }}>Manage and review booking history</div>
+              <div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1 }}>Appointment Booking</div>
+              <div style={{ opacity: 0.95, fontSize: 14 }}>Approved appointments only</div>
             </div>
           </div>
 
@@ -993,7 +1077,7 @@ export default function AdminAppointments() {
 
             {menuOpen ? (
               <div style={dropdown} role="menu" aria-label="Account menu">
-                <div style={ddName}>{adminProfile?.name || adminProfile?.email || "Admin"}</div>
+                <div style={ddName}>{adminProfile?.email || "Admin"}</div>
                 <div style={ddSub}>{idLabelText}</div>
                 <div style={{ color: "#fff", fontWeight: 900, marginTop: 2 }}>{adminIdShort}</div>
 
@@ -1020,9 +1104,15 @@ export default function AdminAppointments() {
             {/* FILTERS ROW */}
             <div style={filtersBar}>
               <div>
-                <div style={filterLabel}>Status</div>
-                <select name="status" value={filters.status} onChange={onFilterChange} style={filterControl} disabled={busy}>
-                  {statusOptions.map((s) => (
+                <div style={filterLabel}>Payment Status</div>
+                <select
+                  name="paymentStatus"
+                  value={filters.paymentStatus}
+                  onChange={onFilterChange}
+                  style={filterControl}
+                  disabled={loading || completeSaving}
+                >
+                  {paymentStatusOptions.map((s) => (
                     <option key={s} value={s}>
                       {s}
                     </option>
@@ -1031,33 +1121,23 @@ export default function AdminAppointments() {
               </div>
 
               <div>
-                <div style={filterLabel}>Procedure</div>
-                <select
-                  name="procedure"
-                  value={filters.procedure}
+                <div style={filterLabel}>Date</div>
+                <input
+                  type="date"
+                  name="date"
+                  value={filters.date}
                   onChange={onFilterChange}
                   style={filterControl}
-                  disabled={busy}
-                >
-                  {procedureOptions.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <div style={filterLabel}>Date</div>
-                <input type="date" name="date" value={filters.date} onChange={onFilterChange} style={filterControl} disabled={busy} />
+                  disabled={loading || completeSaving}
+                />
               </div>
 
               <div style={filterBtns}>
-                <button type="button" style={filterBtn(busy)} onClick={load} disabled={busy}>
+                <button type="button" style={filterBtn(loading)} onClick={load} disabled={loading}>
                   Refresh
                 </button>
-                <button type="button" style={filterBtn(false)} onClick={() => setFilters({ status: "Pending", procedure: "All", date: "" })}>
-                  Reset Filters
+                <button type="button" style={filterBtn(false)} onClick={() => setFilters({ paymentStatus: "All", date: "" })}>
+                  Reset
                 </button>
               </div>
             </div>
@@ -1065,76 +1145,80 @@ export default function AdminAppointments() {
             {/* TABLE PANEL */}
             <div style={tablePanel}>
               <div style={tableHeader}>
-                <div>Patient Name</div>
+                <div>Full Name of Patient</div>
                 <div>Patient ID</div>
+                <div>Date of Appointment</div>
                 <div>Procedure</div>
-                <div>Date</div>
-                <div>Request Slip</div>
-                <div>Actions</div>
+                <div>Payment Status</div>
+                <div>View Receipt</div>
+                <div>Upload Result</div>
               </div>
 
               <div style={tableBody}>
                 {loading ? (
                   <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>Loading appointments...</div>
-                ) : rows.length === 0 ? (
+                ) : filteredRows.length === 0 ? (
                   <div style={{ padding: "16px 12px", color: "#64748b", fontWeight: 800 }}>
-                    No appointments found for the selected filters.
+                    No Approved appointments found.
                   </div>
                 ) : (
-                  rows.map((a) => {
+                  filteredRows.map((a) => {
                     const patient = a.patientId || null;
-                    const patientName = safeName(patient);
+                    const patientName = typeof patient === "object" ? fullNameProfileStyle(patient) : "—";
                     const patientId = getPatientIdValue(patient);
 
                     const dt = toDateObj(a);
-                    const dateText = dt ? dt.toLocaleDateString() : "-";
+                    const dateText = dt ? dt.toLocaleDateString() : "—";
 
-                    const referralUrl = String(a?.referralUrl || "").trim();
-                    const hasSlip = !!referralUrl;
+                    const bill = billsMap?.[String(a._id)] || null;
+                    const billId = bill?._id ? String(bill._id) : "";
 
-                    const isRowBusy = savingId === a._id || completeSaving;
+                    const receiptRaw = getReceiptRawFromBill(bill);
+                    const receiptUrl = normalizeFileUrl(receiptRaw);
+                    const hasReceipt = Boolean(receiptUrl);
+
+                    const statusRaw = bill?.status || "";
+                    const payValue = normalizePaymentStatus(statusRaw, hasReceipt);
+
+                    const rowBusy = completeSaving || paySavingId === a._id;
 
                     return (
                       <div key={a._id} style={rowStyle}>
-                        <div>{patientName}</div>
+                        <div style={{ fontWeight: 900 }}>{patientName}</div>
                         <div>{patientId}</div>
-                        <div>{a.procedure || "—"}</div>
                         <div>{dateText}</div>
-
-                        {/* ✅ Request Slip cell */}
-                        <div>
-                          {hasSlip ? (
-                            <button type="button" style={slipBtn(false)} onClick={() => openSlipModal(referralUrl)}>
-                              View Slip
-                            </button>
-                          ) : (
-                            "—"
-                          )}
-                        </div>
+                        <div>{a?.procedure || "—"}</div>
 
                         <div>
                           <select
-                            value={a.status || "Pending"}
-                            disabled={isRowBusy}
-                            style={statusSelectStyle(a.status || "Pending", isRowBusy)}
-                            onChange={(e) => {
-                              const next = e.target.value;
-
-                              // "Completed" requires PDF + notes + billing
-                              if (next === "Completed") {
-                                openCompleteModal(a);
-                                return;
-                              }
-
-                              if (next !== (a.status || "Pending")) setStatus(a._id, next);
-                            }}
+                            value={payValue}
+                            disabled={rowBusy || !billId}
+                            style={paymentSelectStyle(rowBusy || !billId)}
+                            title={!billId ? "No bill found for this appointment yet." : "Edit payment status"}
+                            onChange={(e) => updateBillStatusForAppointment(String(a._id), billId, e.target.value)}
                           >
-                            {STATUSES.map((s) => (
+                            {PAYMENT_STATUSES.map((s) => (
                               <option key={s} value={s}>
                                 {s}
                               </option>
                             ))}
                           </select>
+                        </div>
+
+                        <div>
+                          {hasReceipt ? (
+                            <button type="button" style={btnDark(false)} onClick={() => openReceiptModal(receiptUrl)}>
+                              View
+                            </button>
+                          ) : (
+                            <span style={{ color: "#94a3b8" }}>—</span>
+                          )}
+                        </div>
+
+                        <div>
+                          <button type="button" style={btnOutline(false)} onClick={() => openCompleteModal(a)} disabled={completeSaving}>
+                            Upload
+                          </button>
                         </div>
                       </div>
                     );
@@ -1149,39 +1233,39 @@ export default function AdminAppointments() {
           </div>
         </div>
 
-        {/* ✅ REQUEST SLIP MODAL */}
-        {slipOpen && slipUrlView ? (
-          <div style={overlay} onClick={closeSlipModal} role="dialog" aria-modal="true" aria-label="View request slip">
+        {/* RECEIPT MODAL */}
+        {receiptOpen && receiptUrlView ? (
+          <div style={overlay} onClick={closeReceiptModal} role="dialog" aria-modal="true" aria-label="View receipt">
             <div style={{ ...modal, width: "min(1100px, 96%)" }} onClick={(e) => e.stopPropagation()}>
               <div style={modalHeader}>
-                <h2 style={modalTitle}>Request Slip</h2>
-                <div style={modalSub}>Preview request slip (PDF/Image)</div>
+                <h2 style={modalTitle}>Receipt</h2>
+                <div style={modalSub}>Preview receipt (PDF/Image)</div>
               </div>
 
               <div style={modalInner}>
                 <div style={card}>
-                  {isPdfUrl(slipUrlView) ? (
+                  {isPdfUrl(receiptUrlView) ? (
                     <iframe
-                      src={slipUrlView}
-                      title="Request Slip PDF"
+                      src={receiptUrlView}
+                      title="Receipt PDF"
                       style={{ width: "100%", height: "70vh", border: 0, borderRadius: 12 }}
                     />
                   ) : (
                     <div style={{ display: "grid", placeItems: "center" }}>
                       <img
-                        src={slipUrlView}
-                        alt="Request Slip"
+                        src={receiptUrlView}
+                        alt="Receipt"
                         style={{ maxWidth: "100%", maxHeight: "70vh", borderRadius: 12 }}
                       />
                     </div>
                   )}
 
                   <div style={{ marginTop: 14, display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-                    <button type="button" style={btnOutline(false)} onClick={closeSlipModal}>
+                    <button type="button" style={bigBtnOutline(false)} onClick={closeReceiptModal}>
                       Close
                     </button>
 
-                    <button type="button" style={btnDark(false)} onClick={() => openSlipInNewTab(slipUrlView)}>
+                    <button type="button" style={bigBtnDark(false)} onClick={() => openReceiptInNewTab(receiptUrlView)}>
                       Open in new tab
                     </button>
                   </div>
@@ -1191,12 +1275,12 @@ export default function AdminAppointments() {
           </div>
         ) : null}
 
-        {/* ===== COMPLETE MODAL ===== */}
+        {/* UPLOAD RESULT MODAL */}
         {showCompleteModal ? (
-          <div style={overlay} onClick={closeCompleteModal} role="dialog" aria-modal="true" aria-label="Complete appointment">
+          <div style={overlay} onClick={closeCompleteModal} role="dialog" aria-modal="true" aria-label="Upload result">
             <div style={modal} onClick={(e) => e.stopPropagation()}>
               <div style={modalHeader}>
-                <h2 style={modalTitle}>Complete Appointment</h2>
+                <h2 style={modalTitle}>Upload Result</h2>
                 <div style={modalSub}>
                   {completeAppt?.procedure || "-"} • {completeAppt ? toDateObj(completeAppt)?.toLocaleDateString() : "-"}
                 </div>
@@ -1205,7 +1289,6 @@ export default function AdminAppointments() {
               <div style={modalInner}>
                 <div style={card}>
                   <div style={{ display: "grid", gap: 12 }}>
-                    {/* Billing selection */}
                     <div>
                       <div style={cardLabel}>Procedure Done / Billing *</div>
                       <select
@@ -1221,14 +1304,6 @@ export default function AdminAppointments() {
                           </option>
                         ))}
                       </select>
-                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
-                        Fee is based on the standard rate list.
-                      </div>
-                    </div>
-
-                    <div>
-                      <div style={cardLabel}>Fee</div>
-                      <input type="text" style={inputLight} readOnly value={selectedBilling ? formatPhp(selectedBilling.fee) : "—"} />
                     </div>
 
                     <div>
@@ -1240,9 +1315,7 @@ export default function AdminAppointments() {
                         disabled={completeSaving}
                         onChange={(e) => setCompletePdf(e.target.files?.[0] || null)}
                       />
-                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>
-                        PDF only. Max 10MB.
-                      </div>
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", fontWeight: 800 }}>PDF only. Max 10MB.</div>
                     </div>
 
                     <div>
@@ -1259,16 +1332,17 @@ export default function AdminAppointments() {
                   </div>
 
                   <div style={modalBtns}>
-                    <button type="button" style={btnOutline(completeSaving)} disabled={completeSaving} onClick={closeCompleteModal}>
+                    <button type="button" style={bigBtnOutline(completeSaving)} disabled={completeSaving} onClick={closeCompleteModal}>
                       Cancel
                     </button>
+
                     <button
                       type="button"
-                      style={btnDark(completeSaving || !completePdf || !completeNotes.trim() || !completeBillingCode)}
+                      style={bigBtnDark(completeSaving || !completePdf || !completeNotes.trim() || !completeBillingCode)}
                       disabled={completeSaving || !completePdf || !completeNotes.trim() || !completeBillingCode}
                       onClick={submitComplete}
                     >
-                      {completeSaving ? "Saving..." : "Submit & Complete"}
+                      {completeSaving ? "Saving..." : "Submit"}
                     </button>
                   </div>
                 </div>

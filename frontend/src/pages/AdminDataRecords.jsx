@@ -1,6 +1,6 @@
 // frontend/src/pages/AdminDataRecords.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiUpload } from "../api";
+import { apiGet } from "../api";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 /* ---------- ICONS (SVG) ---------- */
@@ -115,7 +115,7 @@ function shortId(id) {
   return String(id).slice(-8).toUpperCase();
 }
 
-// ✅ Prefer BSRT ID when patient object is populated
+// Prefer BSRT ID when patient object is populated
 function getPatientIdValue(patientId) {
   if (!patientId) return "—";
 
@@ -181,11 +181,9 @@ function calcAge(dob) {
 
 function getPatientSex(patientId) {
   if (!patientId || typeof patientId === "string") return "";
-  return (
-    String(patientId.sex || patientId.gender || patientId.mf || patientId.sexAtBirth || "")
-      .trim()
-      .toUpperCase() || ""
-  );
+  return String(patientId.sex || patientId.gender || patientId.mf || patientId.sexAtBirth || "")
+    .trim()
+    .toUpperCase();
 }
 function getPatientContact(patientId) {
   if (!patientId || typeof patientId === "string") return "";
@@ -216,22 +214,19 @@ export default function AdminDataRecords() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("Newest");
 
-  // ✅ Patient Records modal (intermediate modal)
+  // Patient Records modal
   const [patientModalOpen, setPatientModalOpen] = useState(false);
   const [selectedPatientKey, setSelectedPatientKey] = useState("");
 
-  // ✅ Diagnostic Record modal (existing modal)
+  // Diagnostic Record modal
   const [viewOpen, setViewOpen] = useState(false);
   const [viewItem, setViewItem] = useState(null);
 
-  // ✅ Receipt meta (per appointment)
+  // Receipt meta (per appointment)
   const [billMeta, setBillMeta] = useState({});
   const [metaLoading, setMetaLoading] = useState(false);
 
-  // ✅ uploading state per appointmentId
-  const [uploading, setUploading] = useState({});
-
-  // ✅ Receipt viewer modal
+  // Receipt viewer modal
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [receiptUrlView, setReceiptUrlView] = useState("");
 
@@ -246,7 +241,7 @@ export default function AdminDataRecords() {
     setReceiptUrlView("");
   }
 
-  function openReceiptInNewTab(url) {
+  function openInNewTab(url) {
     if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
   }
@@ -334,7 +329,7 @@ export default function AdminDataRecords() {
       setLoading(true);
       setMsg("");
 
-      // ✅ Include BOTH Completed + Approved
+      // Completed + Approved
       const [completedRes, approvedRes] = await Promise.all([
         apiGet("/api/admin/appointments?status=Completed", authToken),
         apiGet("/api/admin/appointments?status=Approved", authToken),
@@ -343,12 +338,10 @@ export default function AdminDataRecords() {
       const completed = Array.isArray(completedRes) ? completedRes : [];
       const approved = Array.isArray(approvedRes) ? approvedRes : [];
 
-      // merge + dedupe by _id (just in case)
       const merged = [...completed, ...approved];
       const deduped = Array.from(new Map(merged.map((a) => [a?._id, a])).values()).filter(Boolean);
 
       setRows(deduped);
-
       await loadBillMetaFor(deduped);
     } catch (err) {
       setMsg(err.message || "Failed to load data records");
@@ -447,7 +440,7 @@ export default function AdminDataRecords() {
   const isSuperAdmin = roleClean === "superadmin";
   const idLabelText = isSuperAdmin ? "Superadmin ID" : "Admin ID";
 
-  // ✅ Group appointments into 1 row per Patient ID
+  // Group appointments into 1 row per Patient ID
   const patientGroups = useMemo(() => {
     const map = new Map();
 
@@ -455,7 +448,6 @@ export default function AdminDataRecords() {
       const p = a?.patientId || null;
 
       let pidKey = getPatientIdValue(p);
-      // avoid collapsing into one bucket if pidKey is "—"
       if (!pidKey || pidKey === "—") {
         const raw = typeof p === "string" ? p : p?._id;
         pidKey = raw ? shortId(raw) : `UNK_${String(a?._id || Math.random())}`;
@@ -486,13 +478,11 @@ export default function AdminDataRecords() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
-  // ✅ Find selected group (so it stays fresh if rows change)
   const selectedGroup = useMemo(() => {
     if (!selectedPatientKey) return null;
     return patientGroups.find((g) => g.key === selectedPatientKey) || null;
   }, [patientGroups, selectedPatientKey]);
 
-  // ✅ Filter + Sort (patient-level)
   const filteredPatients = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = patientGroups;
@@ -511,7 +501,6 @@ export default function AdminDataRecords() {
     if (sort === "Oldest") sorted.sort((a, b) => a.oldestMs - b.oldestMs);
     if (sort === "Name A-Z") sorted.sort((a, b) => String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase()));
     if (sort === "Name Z-A") sorted.sort((a, b) => String(b.name || "").toLowerCase().localeCompare(String(a.name || "").toLowerCase()));
-
     return sorted;
   }, [patientGroups, search, sort]);
 
@@ -535,55 +524,6 @@ export default function AdminDataRecords() {
   function closeView() {
     setViewOpen(false);
     setViewItem(null);
-  }
-
-  async function uploadReceiptForAppointment(apptId, file) {
-    const authToken = getAuthTokenAny();
-    if (!authToken) return nav("/login");
-    if (!apptId || !file) return;
-
-    setMsg("");
-
-    let billId = billMeta?.[apptId]?.billId || null;
-
-    if (!billId) {
-      try {
-        const b = await apiGet(`/api/admin/appointments/${apptId}/bill`, authToken);
-        billId = b?._id || null;
-        setBillMeta((prev) => ({
-          ...prev,
-          [apptId]: { billId, receiptUrl: b?.receiptUrl || "" },
-        }));
-      } catch {
-        billId = null;
-      }
-    }
-
-    if (!billId) {
-      setMsg("Billing record not found for this appointment.");
-      return;
-    }
-
-    try {
-      setUploading((p) => ({ ...p, [apptId]: true }));
-
-      const fd = new FormData();
-      fd.append("receipt", file);
-
-      const updated = await apiUpload(`/api/admin/bills/${billId}/receipt`, authToken, fd);
-
-      setBillMeta((prev) => ({
-        ...prev,
-        [apptId]: {
-          billId: updated?._id || billId,
-          receiptUrl: updated?.receiptUrl || "",
-        },
-      }));
-    } catch (err) {
-      setMsg(err.message || "Upload receipt failed");
-    } finally {
-      setUploading((p) => ({ ...p, [apptId]: false }));
-    }
   }
 
   /* ---------- STYLES ---------- */
@@ -867,7 +807,7 @@ export default function AdminDataRecords() {
     cursor: "pointer",
   };
 
-  // MAIN TABLE (patient-level)
+  // Patient-level Table
   const tableHeader = {
     display: "grid",
     gridTemplateColumns: "1.2fr 1fr 0.45fr 0.6fr",
@@ -906,7 +846,7 @@ export default function AdminDataRecords() {
     whiteSpace: "nowrap",
   });
 
-  // OVERLAYS (layered modals)
+  // OVERLAYS
   const overlayBase = {
     position: "fixed",
     inset: 0,
@@ -919,7 +859,7 @@ export default function AdminDataRecords() {
   const overlayView = { ...overlayBase, zIndex: 2000 };
   const overlayReceipt = { ...overlayBase, zIndex: 2100 };
 
-  /* ---------- PATIENT RECORDS MODAL (intermediate) ---------- */
+  /* ---------- PATIENT RECORDS MODAL ---------- */
   const patientBorder = {
     width: "min(1180px, 96vw)",
     height: "min(760px, 88vh)",
@@ -1056,7 +996,7 @@ export default function AdminDataRecords() {
     };
   };
 
-  /* ---------- DIAGNOSTIC RECORD MODAL (existing) ---------- */
+  /* ---------- DIAGNOSTIC RECORD MODAL ---------- */
   const viewBorder = {
     width: "min(1100px, 92vw)",
     height: "min(650px, 82vh)",
@@ -1248,7 +1188,7 @@ export default function AdminDataRecords() {
   const SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon },
-    { label: "Appointment Booking", to: "/appointments", IconComp: CalendarIcon },
+    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
     { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon },
   ];
@@ -1443,13 +1383,11 @@ export default function AdminDataRecords() {
               </div>
             </div>
 
-            <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>
-              RISWebApp • Admin
-            </div>
+            <div style={{ textAlign: "center", color: "#64748b", fontWeight: 800, marginTop: 10, fontSize: 12 }}>RISWebApp • Admin</div>
           </div>
         </div>
 
-        {/* PATIENT RECORDS MODAL (shows all records for Patient ID) */}
+        {/* PATIENT RECORDS MODAL */}
         {patientModalOpen && selectedGroup ? (
           <div style={overlayPatient} onClick={closePatientModal} role="dialog" aria-modal="true" aria-label="Patient records">
             <div style={patientBorder} onClick={(e) => e.stopPropagation()}>
@@ -1519,7 +1457,7 @@ export default function AdminDataRecords() {
                   <div>Date</div>
                   <div>Procedure</div>
                   <div>Status</div>
-                  <div />
+                  <div>Receipt</div>
                   <div />
                 </div>
 
@@ -1533,9 +1471,7 @@ export default function AdminDataRecords() {
 
                     const meta = billMeta?.[apptId];
                     const receiptUrl = meta?.receiptUrl || "";
-                    const isUploading = !!uploading?.[apptId];
                     const metaReady = meta !== undefined || !metaLoading;
-                    const inputId = `receipt_file_${apptId}`;
 
                     return (
                       <div key={apptId} style={apptRow}>
@@ -1545,36 +1481,16 @@ export default function AdminDataRecords() {
                           <span style={statusPill(status)}>{status}</span>
                         </div>
 
+                        {/* Receipt column (View only, no Upload) */}
                         <div>
-                          <input
-                            id={inputId}
-                            type="file"
-                            accept="application/pdf,image/png,image/jpeg,image/webp"
-                            style={{ display: "none" }}
-                            onChange={(e) => {
-                              const f = e.target.files?.[0] || null;
-                              e.target.value = "";
-                              if (!f) return;
-                              uploadReceiptForAppointment(apptId, f);
-                            }}
-                          />
-
-                          {receiptUrl ? (
+                          {!metaReady ? (
+                            <span style={{ opacity: 0.85, fontWeight: 900 }}>Loading…</span>
+                          ) : receiptUrl ? (
                             <button type="button" style={apptBtn(false, "white")} onClick={() => openReceiptModal(receiptUrl)}>
                               View Receipt
                             </button>
                           ) : (
-                            <button
-                              type="button"
-                              style={apptBtn(isUploading || !metaReady, "white")}
-                              disabled={isUploading || !metaReady}
-                              onClick={() => {
-                                const el = document.getElementById(inputId);
-                                if (el) el.click();
-                              }}
-                            >
-                              {isUploading ? "Uploading..." : metaReady ? "Upload" : "Loading..."}
-                            </button>
+                            <span style={{ opacity: 0.85, fontWeight: 900 }}>—</span>
                           )}
                         </div>
 
@@ -1592,7 +1508,7 @@ export default function AdminDataRecords() {
           </div>
         ) : null}
 
-        {/* DIAGNOSTIC RECORD MODAL (existing, last design) */}
+        {/* DIAGNOSTIC RECORD MODAL */}
         {viewOpen && viewItem
           ? (() => {
               const patient = viewItem.patientId || null;
@@ -1616,16 +1532,7 @@ export default function AdminDataRecords() {
               const fullTarget = imgUrl || pdfUrl;
 
               const onViewFull = () => {
-                if (fullTarget) openReceiptInNewTab(fullTarget);
-              };
-
-              const onPrint = () => {
-                const target = pdfUrl || imgUrl;
-                if (target) {
-                  openReceiptInNewTab(target);
-                  return;
-                }
-                window.print();
+                if (fullTarget) openInNewTab(fullTarget);
               };
 
               return (
@@ -1675,11 +1582,26 @@ export default function AdminDataRecords() {
 
                           <div style={viewLinedBox}>{viewItem.resultNotes ? String(viewItem.resultNotes) : "—"}</div>
 
+                          {/* ✅ Open Full Report goes to ADMIN report route */}
                           <div style={viewBtnRow}>
-                            <button type="button" style={viewActionBtn} onClick={onPrint}>
-                              <PrinterIcon size={18} />
-                              Print Results
-                            </button>
+                            {viewItem?._id ? (
+                              <button
+                                type="button"
+                                style={viewActionBtn}
+                                onClick={() => {
+                                  closeView();
+                                  nav(`/admin/report/${viewItem._id}`);
+                                }}
+                              >
+                                <PrinterIcon size={18} />
+                                Open Full Report
+                              </button>
+                            ) : (
+                              <button type="button" style={{ ...viewActionBtn, opacity: 0.6, cursor: "not-allowed" }} disabled>
+                                <PrinterIcon size={18} />
+                                Open Full Report
+                              </button>
+                            )}
 
                             <button type="button" style={viewActionBtn} onClick={onViewFull} disabled={!fullTarget}>
                               View Full Image
@@ -1730,7 +1652,7 @@ export default function AdminDataRecords() {
                       Close
                     </button>
 
-                    <button type="button" style={linkBtn} onClick={() => openReceiptInNewTab(receiptUrlView)}>
+                    <button type="button" style={linkBtn} onClick={() => openInNewTab(receiptUrlView)}>
                       Open in new tab
                     </button>
                   </div>

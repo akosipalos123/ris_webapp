@@ -1010,10 +1010,10 @@ export default function EditProfile() {
 
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
-    { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
+    { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
+    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon, exact: true },
+    { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
+    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
   const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;

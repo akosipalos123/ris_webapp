@@ -185,16 +185,17 @@ router.post("/referral", requireAuth, upload.single("referral"), async (req, res
 });
 
 /**
- * ✅ NEW: Patient uploads payment receipt for a bill
+ * ✅ Patient uploads payment receipt for a bill
  *
  * POST /api/upload/bill-receipt
  * multipart/form-data:
  * - receipt: PDF or image (PNG/JPG/WebP)
  * - billId: string (required)
  *
- * NOTE: This does **A**:
- * - only sets bill.receiptUrl
- * - does NOT change bill.status or paidAt
+ * ✅ NEW behavior:
+ * - sets bill.receiptUrl
+ * - AND updates bill.status = "For Confirmation" (stored in MongoDB)
+ * - does NOT set paidAt (admin sets Paid)
  */
 router.post("/bill-receipt", requireAuth, upload.single("receipt"), async (req, res) => {
   try {
@@ -226,6 +227,11 @@ router.post("/bill-receipt", requireAuth, upload.single("receipt"), async (req, 
       return res.status(403).json({ message: "Forbidden" });
     }
 
+    // Optional: don’t allow receipt upload if voided
+    if (String(bill.status || "") === "Voided") {
+      return res.status(400).json({ message: "Cannot upload receipt for a voided bill." });
+    }
+
     const isPdf = req.file.mimetype === "application/pdf";
     const ext = isPdf ? ".pdf" : ".jpg";
     const safeName = `bill_${bill._id}_${Date.now()}${ext}`;
@@ -241,6 +247,15 @@ router.post("/bill-receipt", requireAuth, upload.single("receipt"), async (req, 
     });
 
     bill.receiptUrl = uploaded.secure_url || "";
+
+    // ✅ IMPORTANT: persist status in DB (NOT computed)
+    // Only bump to "For Confirmation" if not already Paid
+    const current = String(bill.status || "").trim();
+    if (current !== "Paid") {
+      bill.status = "For Confirmation";
+      // don't touch paidAt here
+    }
+
     await bill.save();
 
     return res.json(bill.toObject());

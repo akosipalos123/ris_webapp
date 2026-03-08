@@ -471,6 +471,14 @@ export default function BookAppointment() {
   const [soonOpen, setSoonOpen] = useState(false);
   const lastProcedureRef = useRef("");
 
+  // ✅ Detect admin/superadmin session (so they don't use the patient booking page)
+  const adminSession = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const adminToken = localStorage.getItem("adminToken");
+    const adminRole = String(localStorage.getItem("adminRole") || "").trim().toLowerCase();
+    return !!adminToken && (adminRole === "admin" || adminRole === "superadmin");
+  }, []);
+
   // ✅ If user uploaded a slip and didn't select a procedure, use a safe fallback.
   const procedureForBooking = useMemo(() => {
     const p = String(form.procedure || "").trim();
@@ -482,6 +490,9 @@ export default function BookAppointment() {
   const todayIso = toLocalISODate(new Date());
 
   async function loadAll() {
+    // ✅ If admin somehow lands here, push them to admin booking
+    if (adminSession) return nav("/admin/appointment-booking");
+
     const token = localStorage.getItem("token");
     if (!token) return nav("/login");
 
@@ -504,10 +515,15 @@ export default function BookAppointment() {
     }
   }
 
+  // ✅ On mount: patients load; admins redirect to admin booking page
   useEffect(() => {
+    if (adminSession) {
+      nav("/admin/appointment-booking");
+      return;
+    }
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [adminSession]);
 
   // Close drawer on route change (mobile/tablet)
   useEffect(() => {
@@ -795,15 +811,9 @@ export default function BookAppointment() {
   const procedureGroups = useMemo(() => {
     const items = Array.isArray(XRAY_PROCEDURE_ITEMS) ? XRAY_PROCEDURE_ITEMS : [];
 
-    const ultrasound = items.filter(
-      (x) => String(x.code) === "ULTRASOUND" || String(x.label) === "Ultrasound"
-    );
-
+    const ultrasound = items.filter((x) => String(x.code) === "ULTRASOUND" || String(x.label) === "Ultrasound");
     const chest = items.filter((x) => String(x.code).startsWith("CHEST_"));
-
-    const others = items.filter(
-      (x) => !String(x.code).startsWith("CHEST_") && String(x.code) !== "ULTRASOUND"
-    );
+    const others = items.filter((x) => !String(x.code).startsWith("CHEST_") && String(x.code) !== "ULTRASOUND");
 
     return { chest, others, ultrasound };
   }, [XRAY_PROCEDURE_ITEMS]);
@@ -832,10 +842,7 @@ export default function BookAppointment() {
   };
 
   /* ---------- ROLE + LABEL (match Profile.jsx behavior) ---------- */
-  const roleClean = useMemo(
-    () => String(profile?.role || profile?.userType || "").trim().toLowerCase(),
-    [profile]
-  );
+  const roleClean = useMemo(() => String(profile?.role || profile?.userType || "").trim().toLowerCase(), [profile]);
   const isAdmin = roleClean === "admin" || roleClean === "superadmin" || profile?.isAdmin === true;
   const isSuperAdmin = roleClean === "superadmin";
   const idLabelText = isAdmin ? (isSuperAdmin ? "Superadmin ID" : "Admin ID") : "Patient ID";
@@ -843,7 +850,7 @@ export default function BookAppointment() {
   /* ---------- SIDEBAR ITEMS ---------- */
   const PATIENT_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon },
+    { label: "My Appointments", to: "/appointments", IconComp: CalendarIcon }, // ✅ patient-only booking page
     { label: "My Bills", to: "/bills", IconComp: BillsIcon },
     { label: "Diagnostic Results", to: "/diagnostic-results", IconComp: ResultsIcon },
     { label: "Patient Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
@@ -852,7 +859,8 @@ export default function BookAppointment() {
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
     { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
+    // ✅ admin-only booking page (new route)
+    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: BookingIcon },
     { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
     { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
   ];
@@ -1091,13 +1099,7 @@ export default function BookAppointment() {
               <div className="brandText">AXIS</div>
             </div>
 
-            <button
-              type="button"
-              className="headerBtn"
-              onClick={() => setDrawerOpen(false)}
-              aria-label="Close menu"
-              title="Close"
-            >
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
               ✕
             </button>
           </div>
@@ -1145,13 +1147,7 @@ export default function BookAppointment() {
           <header className="topbar">
             <div className="topbarInner">
               <div className="topTitleWrap">
-                <button
-                  type="button"
-                  className="burger"
-                  title="Menu"
-                  onClick={() => setDrawerOpen((v) => !v)}
-                  aria-label="Open menu"
-                >
+                <button type="button" className="burger" title="Menu" onClick={() => setDrawerOpen((v) => !v)} aria-label="Open menu">
                   ☰
                 </button>
 
@@ -1276,12 +1272,7 @@ export default function BookAppointment() {
                       <div style={{ fontWeight: 900, color: "#0f172a" }}>{procedureText}</div>
 
                       <div style={actionRow}>
-                        <button
-                          type="button"
-                          style={cancelBtn(!allowCancel)}
-                          disabled={!allowCancel}
-                          onClick={() => cancelAppointment(a._id)}
-                        >
+                        <button type="button" style={cancelBtn(!allowCancel)} disabled={!allowCancel} onClick={() => cancelAppointment(a._id)}>
                           Cancel
                         </button>
 
@@ -1876,7 +1867,13 @@ export default function BookAppointment() {
 
   const modalInner = { flex: 1, overflow: "auto", paddingRight: 6 };
 
-  const modalGrid = { display: "grid", gridTemplateColumns: "1fr 1fr 0.95fr", gap: 22, alignItems: "start", marginTop: 8 };
+  const modalGrid = {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 0.95fr",
+    gap: 22,
+    alignItems: "start",
+    marginTop: 8,
+  };
 
   const field = { marginBottom: 14 };
   const fieldLabel = { color: "#fff", fontWeight: 900, fontSize: 20, marginBottom: 8 };
@@ -1905,7 +1902,14 @@ export default function BookAppointment() {
     padding: 10,
   };
 
-  const bottomRow = { display: "flex", alignItems: "center", justifyContent: "center", gap: 14, marginTop: 8, flexWrap: "wrap" };
+  const bottomRow = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+    marginTop: 8,
+    flexWrap: "wrap",
+  };
 
   const procWrap = { display: "flex", alignItems: "center", gap: 12 };
   const orText = { color: "#fff", fontWeight: 900, opacity: 0.85 };
@@ -2035,14 +2039,7 @@ export default function BookAppointment() {
               <div style={patientIdValue}>{patientIdShort}</div>
             </div>
 
-            <button
-              type="button"
-              style={profileToggleBtn}
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              title="Account menu"
-            >
+            <button type="button" style={profileToggleBtn} onClick={() => setMenuOpen((v) => !v)} aria-haspopup="menu" aria-expanded={menuOpen} title="Account menu">
               <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" style={avatar} />
               <div style={chevronBox}>{menuOpen ? "▴" : "▾"}</div>
             </button>
@@ -2152,12 +2149,7 @@ export default function BookAppointment() {
                         <div>{statusText}</div>
 
                         <div>
-                          <button
-                            type="button"
-                            style={cancelBtn(!allowCancel)}
-                            disabled={!allowCancel}
-                            onClick={() => cancelAppointment(a._id)}
-                          >
+                          <button type="button" style={cancelBtn(!allowCancel)} disabled={!allowCancel} onClick={() => cancelAppointment(a._id)}>
                             Cancel
                           </button>
                         </div>
@@ -2225,11 +2217,7 @@ export default function BookAppointment() {
                     <div>
                       <div style={field}>
                         <div style={fieldLabel}>Birthdate</div>
-                        <input
-                          style={input}
-                          placeholder="mm/dd/yyyy"
-                          defaultValue={profile?.birthdate ? new Date(profile.birthdate).toLocaleDateString() : ""}
-                        />
+                        <input style={input} placeholder="mm/dd/yyyy" defaultValue={profile?.birthdate ? new Date(profile.birthdate).toLocaleDateString() : ""} />
                       </div>
 
                       <div style={field}>
@@ -2251,14 +2239,7 @@ export default function BookAppointment() {
                       <div style={{ marginTop: 8 }}>
                         <div style={procWrap}>
                           <div style={{ minWidth: 240 }}>
-                            <select
-                              className="syn-procedure-select"
-                              name="procedure"
-                              value={form.procedure}
-                              onChange={onBookChange}
-                              style={select}
-                              required={!slipFile}
-                            >
+                            <select className="syn-procedure-select" name="procedure" value={form.procedure} onChange={onBookChange} style={select} required={!slipFile}>
                               <option value="">Type of Procedure</option>
 
                               <optgroup label="XRAY Procedures:">
@@ -2382,7 +2363,6 @@ export default function BookAppointment() {
             </div>
           </div>
         ) : null}
-
 
         <style>{`
           .syn-input::placeholder { color: rgba(255,255,255,.65); }

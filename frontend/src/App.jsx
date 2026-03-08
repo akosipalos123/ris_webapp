@@ -10,23 +10,22 @@ import EditProfile from "./pages/EditProfile.jsx";
 import BookAppointment from "./pages/BookAppointment.jsx";
 import AdminAppointments from "./pages/AdminAppointments.jsx";
 import AdminDataRecords from "./pages/AdminDataRecords.jsx";
+import AdminAppointmentBooking from "./pages/AdminAppointmentBooking.jsx";
 
-// ✅ NEW: Forgot/Reset Password pages (PUBLIC)
 import ForgotPassword from "./pages/ForgotPassword.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
-
-// ✅ Admin invite registration page (PUBLIC)
 import AdminRegister from "./pages/AdminRegister.jsx";
 
-// Patient pages
 import MyBills from "./pages/MyBills.jsx";
 import DiagnosticImages from "./pages/DiagnosticImages.jsx";
 import DiagnosticResults from "./pages/DiagnosticResults.jsx";
 import Radiographs from "./pages/Radiographs.jsx";
 import ReportView from "./pages/ReportView.jsx";
 
-// ✅ Super Admin Panel
 import SuperAdminPanel from "./pages/SuperAdminPanel.jsx";
+
+// ✅ NEW: Admin report page
+import AdminReportView from "./pages/AdminReportView.jsx";
 
 /* ---------------- Helpers ---------------- */
 function getRoleClean(me) {
@@ -40,11 +39,14 @@ function isSuperAdminRole(me) {
   const r = getRoleClean(me);
   return r === "superadmin";
 }
+function getAnyToken() {
+  return localStorage.getItem("adminToken") || localStorage.getItem("token") || "";
+}
 
 /* ---------------- Guards ---------------- */
 function ProtectedRoute({ children }) {
-  const token = localStorage.getItem("token");
-  if (!token) return <Navigate to="/login" replace />;
+  const any = getAnyToken();
+  if (!any) return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -55,11 +57,26 @@ function AdminRoute({ children }) {
     let mounted = true;
 
     (async () => {
+      const adminToken = localStorage.getItem("adminToken");
       const token = localStorage.getItem("token");
+
+      // ✅ Prefer adminToken validation
+      if (adminToken) {
+        try {
+          await apiGet("/api/admin/auth/me", adminToken);
+          if (mounted) setState({ loading: false, ok: true });
+          return;
+        } catch {
+          localStorage.removeItem("adminToken");
+        }
+      }
+
+      // Fallback to normal token role check
       if (!token) {
         if (mounted) setState({ loading: false, ok: false });
         return;
       }
+
       try {
         const me = await apiGet("/api/auth/me", token);
         if (mounted) setState({ loading: false, ok: isAdminRole(me) });
@@ -74,18 +91,13 @@ function AdminRoute({ children }) {
   }, []);
 
   if (state.loading) {
-    return (
-      <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">
-        Checking access...
-      </div>
-    );
+    return <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">Checking access...</div>;
   }
 
   if (!state.ok) return <Navigate to="/profile" replace />;
   return children;
 }
 
-/** ✅ Superadmin-only route (role === superadmin) */
 function SuperAdminRoute({ children }) {
   const [state, setState] = useState({ loading: true, ok: false, error: false });
 
@@ -93,7 +105,19 @@ function SuperAdminRoute({ children }) {
     let mounted = true;
 
     (async () => {
+      const adminToken = localStorage.getItem("adminToken");
       const token = localStorage.getItem("token");
+
+      if (adminToken) {
+        try {
+          const me = await apiGet("/api/admin/auth/me", adminToken);
+          if (mounted) setState({ loading: false, ok: isSuperAdminRole(me), error: false });
+          return;
+        } catch {
+          localStorage.removeItem("adminToken");
+        }
+      }
+
       if (!token) {
         if (mounted) setState({ loading: false, ok: false, error: true });
         return;
@@ -101,8 +125,7 @@ function SuperAdminRoute({ children }) {
 
       try {
         const me = await apiGet("/api/auth/me", token);
-        const ok = isSuperAdminRole(me);
-        if (mounted) setState({ loading: false, ok, error: false });
+        if (mounted) setState({ loading: false, ok: isSuperAdminRole(me), error: false });
       } catch {
         if (mounted) setState({ loading: false, ok: false, error: true });
       }
@@ -114,11 +137,7 @@ function SuperAdminRoute({ children }) {
   }, []);
 
   if (state.loading) {
-    return (
-      <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">
-        Checking access...
-      </div>
-    );
+    return <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">Checking access...</div>;
   }
 
   if (state.error) return <Navigate to="/login" replace />;
@@ -126,7 +145,6 @@ function SuperAdminRoute({ children }) {
   return children;
 }
 
-/** ✅ Patient-only route (role === patient) */
 function PatientRoute({ children }) {
   const [state, setState] = useState({ loading: true, ok: false, error: false });
 
@@ -134,14 +152,28 @@ function PatientRoute({ children }) {
     let mounted = true;
 
     (async () => {
+      const adminToken = localStorage.getItem("adminToken");
       const token = localStorage.getItem("token");
+
+      // If adminToken is valid -> not a patient
+      if (adminToken) {
+        try {
+          await apiGet("/api/admin/auth/me", adminToken);
+          if (mounted) setState({ loading: false, ok: false, error: false });
+          return;
+        } catch {
+          localStorage.removeItem("adminToken");
+        }
+      }
+
       if (!token) {
         if (mounted) setState({ loading: false, ok: false, error: true });
         return;
       }
+
       try {
         const me = await apiGet("/api/auth/me", token);
-        const ok = !isAdminRole(me); // patient-only means NOT admin/superadmin
+        const ok = !isAdminRole(me);
         if (mounted) setState({ loading: false, ok, error: false });
       } catch {
         if (mounted) setState({ loading: false, ok: false, error: true });
@@ -154,18 +186,11 @@ function PatientRoute({ children }) {
   }, []);
 
   if (state.loading) {
-    return (
-      <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">
-        Checking access...
-      </div>
-    );
+    return <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">Checking access...</div>;
   }
 
   if (state.error) return <Navigate to="/login" replace />;
-
-  // if admin tries patient-only pages, send them to admin area
   if (!state.ok) return <Navigate to="/admin/appointments" replace />;
-
   return children;
 }
 
@@ -174,34 +199,12 @@ function RootRedirect() {
   const [dest, setDest] = useState(null);
 
   useEffect(() => {
-    let mounted = true;
-
-    (async () => {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        if (mounted) setDest("/login");
-        return;
-      }
-      try {
-        await apiGet("/api/auth/me", token);
-        if (!mounted) return;
-        setDest("/profile");
-      } catch {
-        if (mounted) setDest("/login");
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
+    const any = getAnyToken();
+    setDest(any ? "/profile" : "/login");
   }, []);
 
   if (!dest) {
-    return (
-      <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">
-        Loading...
-      </div>
-    );
+    return <div className="min-vh-100 d-flex align-items-center justify-content-center text-muted">Loading...</div>;
   }
 
   return <Navigate to={dest} replace />;
@@ -211,24 +214,17 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Root smart redirect */}
         <Route path="/" element={<RootRedirect />} />
 
-        {/* Public routes */}
+        {/* Public */}
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
-
-        {/* ✅ NEW: Forgot/Reset Password (PUBLIC) */}
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-
-        {/* ✅ Public invite-based admin registration (matches your invite link) */}
         <Route path="/admin-register" element={<AdminRegister />} />
-
-        {/* ✅ Backwards/alternate path alias */}
         <Route path="/admin/register" element={<Navigate to="/admin-register" replace />} />
 
-        {/* Shared protected routes */}
+        {/* Shared protected */}
         <Route
           path="/profile"
           element={
@@ -237,7 +233,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/profile/edit"
           element={
@@ -247,7 +242,7 @@ export default function App() {
           }
         />
 
-        {/* both patient and admin can book appointments */}
+        {/* Patient booking/history */}
         <Route
           path="/appointments"
           element={
@@ -258,7 +253,7 @@ export default function App() {
         />
         <Route path="/appointments/book" element={<Navigate to="/appointments" replace />} />
 
-        {/* ✅ SUPERADMIN PANEL */}
+        {/* Superadmin */}
         <Route
           path="/admin/super"
           element={
@@ -271,11 +266,9 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* alias for old direct link */}
         <Route path="/superadmin" element={<Navigate to="/admin/super" replace />} />
 
-        {/* ✅ PATIENT-ONLY PAGES */}
+        {/* Patient-only */}
         <Route
           path="/bills"
           element={
@@ -286,7 +279,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/diagnostic-images"
           element={
@@ -297,7 +289,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/diagnostic-results"
           element={
@@ -308,7 +299,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/radiographs"
           element={
@@ -319,7 +309,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/report/:appointmentId"
           element={
@@ -331,7 +320,7 @@ export default function App() {
           }
         />
 
-        {/* ✅ Admin landing route */}
+        {/* Admin landing */}
         <Route
           path="/admin"
           element={
@@ -354,7 +343,16 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
+        <Route
+          path="/admin/appointment-booking"
+          element={
+            <ProtectedRoute>
+              <AdminRoute>
+                <AdminAppointmentBooking />
+              </AdminRoute>
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/admin/data-records"
           element={
@@ -366,19 +364,21 @@ export default function App() {
           }
         />
 
-        {/* OPTIONAL: aliases so your sidebar buttons won't 404 */}
+        {/* ✅ THIS is the missing piece that stops redirect-to-profile */}
         <Route
-          path="/admin/appointment-approval"
+          path="/admin/report/:appointmentId"
           element={
             <ProtectedRoute>
               <AdminRoute>
-                <Navigate to="/admin/appointments" replace />
+                <AdminReportView />
               </AdminRoute>
             </ProtectedRoute>
           }
         />
+
+        {/* Aliases */}
         <Route
-          path="/admin/appointment-booking"
+          path="/admin/appointment-approval"
           element={
             <ProtectedRoute>
               <AdminRoute>
@@ -392,7 +392,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <AdminRoute>
-                <Navigate to="/admin/appointments" replace />
+                <Navigate to="/profile/edit" replace />
               </AdminRoute>
             </ProtectedRoute>
           }

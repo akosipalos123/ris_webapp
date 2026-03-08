@@ -81,45 +81,7 @@ const BrandIcon = (p) => (
   </Icon>
 );
 
-/* ---------- ADMIN ICONS (for sidebar) ---------- */
-const ApprovalIcon = (p) => (
-  <Icon {...p}>
-    <rect x="3" y="4.5" width="18" height="16" rx="2" />
-    <path d="M8 3v3M16 3v3M3 9h18" />
-    <path d="M8 14l2 2 4-4" />
-  </Icon>
-);
 
-const BookingIcon = (p) => (
-  <Icon {...p}>
-    <rect x="3" y="4.5" width="18" height="16" rx="2" />
-    <path d="M8 3v3M16 3v3M3 9h18" />
-    <path d="M12 13v6M9 16h6" />
-  </Icon>
-);
-
-const RecordsIcon = (p) => (
-  <Icon {...p}>
-    <path d="M7 3h10v18H7z" />
-    <path d="M9 7h6M9 11h6M9 15h6" />
-  </Icon>
-);
-
-const AdminInfoIcon = (p) => (
-  <Icon {...p}>
-    <rect x="3" y="5" width="18" height="14" rx="2" />
-    <circle cx="9" cy="12" r="2" />
-    <path d="M6.5 16c1.6-2 4.4-2 6 0" />
-    <path d="M14 10h5M14 14h5" />
-  </Icon>
-);
-
-const SuperAdminIcon = (p) => (
-  <Icon {...p}>
-    <path d="M12 2l8 4v6c0 5-3.2 9.6-8 10-4.8-.4-8-5-8-10V6l8-4z" />
-    <path d="M9 12l2 2 4-4" />
-  </Icon>
-);
 
 /* ---------- HELPERS ---------- */
 function useMediaQuery(query) {
@@ -327,6 +289,12 @@ export default function Profile() {
   const isSuperAdmin = roleClean === "superadmin";
   const canSeeSuperAdminPanel = isSuperAdmin;
 
+  // ✅ Route split: patient uses /appointments, admin/superadmin uses /admin/appointment-booking
+  const appointmentsRoute = useMemo(
+    () => (isAdmin ? "/admin/appointment-booking" : "/appointments"),
+    [isAdmin]
+  );
+
   /* ---------- UPDATES ---------- */
   const updates = useMemo(() => {
     const list = [];
@@ -369,7 +337,7 @@ export default function Profile() {
           type: "appt",
           title: "Appointment approved",
           detail: `${proc} (${schedText}) has been approved.`,
-          cta: { to: "/appointments", label: "View appointments" },
+          cta: { to: appointmentsRoute, label: "View appointments" },
         });
         continue;
       }
@@ -381,7 +349,7 @@ export default function Profile() {
           type: "appt",
           title: "Appointment rejected",
           detail: `${proc} (${schedText}) was rejected.`,
-          cta: { to: "/appointments", label: "View" },
+          cta: { to: appointmentsRoute, label: "View" },
         });
         continue;
       }
@@ -393,7 +361,7 @@ export default function Profile() {
           type: "appt",
           title: "Appointment cancelled",
           detail: `${proc} (${schedText}) was cancelled.`,
-          cta: { to: "/appointments", label: "View" },
+          cta: { to: appointmentsRoute, label: "View" },
         });
         continue;
       }
@@ -404,13 +372,13 @@ export default function Profile() {
         type: "appt",
         title: "Appointment requested",
         detail: `${proc} (${schedText}) is pending approval.`,
-        cta: { to: "/appointments", label: "View" },
+        cta: { to: appointmentsRoute, label: "View" },
       });
     }
 
     list.sort((x, y) => safeTime(y.at) - safeTime(x.at));
     return list;
-  }, [profile, appointments]);
+  }, [profile, appointments, appointmentsRoute]);
 
   const updatesTop = useMemo(() => updates.slice(0, 6), [updates]);
 
@@ -425,10 +393,10 @@ export default function Profile() {
 
   const ADMIN_SIDE_ITEMS = [
     { label: "Home", to: "/profile", IconComp: HomeIcon, exact: true },
-    { label: "Appointment Approval", to: "/admin/appointments", IconComp: ApprovalIcon, exact: true },
-    { label: "Appointment Booking", to: "/appointments", IconComp: BookingIcon },
-    { label: "Data Records", to: "/admin/data-records", IconComp: RecordsIcon },
-    { label: "Admin Information", to: "/profile/edit", IconComp: AdminInfoIcon, exact: true },
+    { label: "Appointment Approval", to: "/admin/appointments", IconComp: CalendarIcon, exact: true },
+    { label: "Appointment Booking", to: "/admin/appointment-booking", IconComp: CalendarIcon, exact: true },
+    { label: "Data Records", to: "/admin/data-records", IconComp: ResultsIcon },
+    { label: "Admin Information", to: "/profile/edit", IconComp: PatientIcon, exact: true },
   ];
 
   const SIDE_ITEMS = isAdmin ? ADMIN_SIDE_ITEMS : PATIENT_SIDE_ITEMS;
@@ -459,13 +427,7 @@ export default function Profile() {
               <div className="brandText">AXIS</div>
             </div>
 
-            <button
-              type="button"
-              className="headerBtn"
-              onClick={() => setDrawerOpen(false)}
-              aria-label="Close menu"
-              title="Close"
-            >
+            <button type="button" className="headerBtn" onClick={() => setDrawerOpen(false)} aria-label="Close menu" title="Close">
               ✕
             </button>
           </div>
@@ -513,13 +475,7 @@ export default function Profile() {
           <header className="topbar">
             <div className="topbarInner">
               <div className="topTitleWrap">
-                <button
-                  type="button"
-                  className="burger"
-                  title="Menu"
-                  onClick={() => setDrawerOpen((v) => !v)}
-                  aria-label="Open menu"
-                >
+                <button type="button" className="burger" title="Menu" onClick={() => setDrawerOpen((v) => !v)} aria-label="Open menu">
                   ☰
                 </button>
 
@@ -642,7 +598,8 @@ export default function Profile() {
                         <div className="infoValue infoValueWrap">{profile.address || "-"}</div>
 
                         <div className="actionsRow">
-                          <Link to="/appointments" className="btnPrimary">
+                          {/* ✅ patient -> /appointments, admin/superadmin -> /admin/appointment-booking */}
+                          <Link to={appointmentsRoute} className="btnPrimary">
                             Book Appointment
                           </Link>
 
@@ -985,13 +942,7 @@ export default function Profile() {
           )}
 
           {sideOpen ? (
-            <button
-              type="button"
-              style={headerBtn}
-              onClick={toggleSidebarDesktop}
-              aria-label="Collapse sidebar"
-              title="Collapse"
-            >
+            <button type="button" style={headerBtn} onClick={toggleSidebarDesktop} aria-label="Collapse sidebar" title="Collapse">
               ☰
             </button>
           ) : null}
@@ -1053,9 +1004,7 @@ export default function Profile() {
 
             <div>
               <div style={{ fontSize: 40, fontWeight: 900, lineHeight: 1 }}>Home</div>
-              <div style={{ opacity: 0.95, fontSize: 13, fontWeight: 700 }}>
-                Manage your profile and appointments
-              </div>
+              <div style={{ opacity: 0.95, fontSize: 13, fontWeight: 700 }}>Manage your profile and appointments</div>
             </div>
           </div>
 
@@ -1065,14 +1014,7 @@ export default function Profile() {
               <div style={patientIdValue}>{patientIdShort}</div>
             </div>
 
-            <button
-              type="button"
-              style={profileToggleBtn}
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              title="Account menu"
-            >
+            <button type="button" style={profileToggleBtn} onClick={() => setMenuOpen((v) => !v)} aria-haspopup="menu" aria-expanded={menuOpen} title="Account menu">
               <img src={profile?.avatarUrl || "/default-avatar.png"} alt="Avatar" style={avatar} />
               <div style={chevronBox}>{menuOpen ? "▴" : "▾"}</div>
             </button>
@@ -1122,15 +1064,7 @@ export default function Profile() {
         </div>
 
         {msg ? (
-          <div
-            style={{
-              padding: "8px 10px",
-              border: "1px solid #f59e0b",
-              background: "#fffbeb",
-              borderRadius: 12,
-              marginBottom: 10,
-            }}
-          >
+          <div style={{ padding: "8px 10px", border: "1px solid #f59e0b", background: "#fffbeb", borderRadius: 12, marginBottom: 10 }}>
             {msg}
           </div>
         ) : null}
@@ -1191,8 +1125,9 @@ export default function Profile() {
                   <div style={{ ...infoValue, fontSize: 18, wordBreak: "break-word" }}>{profile.address || "-"}</div>
 
                   <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {/* ✅ patient -> /appointments, admin/superadmin -> /admin/appointment-booking */}
                     <Link
-                      to="/appointments"
+                      to={appointmentsRoute}
                       style={{
                         textDecoration: "none",
                         background: DARK,

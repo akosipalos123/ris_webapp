@@ -527,7 +527,6 @@ export default function Profile() {
                       <>
                         <div className="ddDivider" />
                         <Link to="/admin/super" onClick={() => setMenuOpen(false)} className="ddBtn ddBtnFull">
-                          <SuperAdminIcon size={18} />
                           Super Admin Panel
                         </Link>
                       </>
@@ -1050,7 +1049,6 @@ export default function Profile() {
                         width: "100%",
                       }}
                     >
-                      <SuperAdminIcon size={18} />
                       Super Admin Panel
                     </Link>
                   </>

@@ -1,4 +1,3 @@
-// backend/routes/admin.js
 const express = require("express");
 const mongoose = require("mongoose");
 const multer = require("multer");
@@ -271,7 +270,16 @@ router.post("/appointments/:id/bill", ...requireAnyAdmin, async (req, res) => {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const status = String(req.body?.status || "Pending").trim();
 
-    const allowedBillStatus = ["Pending", "Unpaid", "Paid", "Voided"];
+    // ✅ UPDATED ONLY: expanded allowed statuses
+    const allowedBillStatus = [
+      "Pending",
+      "Unpaid",
+      "For Confirmation",
+      "Paid",
+      "University Guarantee - Research",
+      "University Guarantee - Medical",
+      "Voided",
+    ];
     if (!allowedBillStatus.includes(status)) {
       return res.status(400).json({ message: "Invalid bill status" });
     }
@@ -335,7 +343,17 @@ router.patch("/bills/:id/status", ...requireAnyAdmin, async (req, res) => {
     }
 
     const nextStatus = String(req.body?.status || "").trim();
-    const allowed = ["Pending", "Unpaid", "Paid", "Voided"];
+
+    // ✅ UPDATED ONLY: expanded allowed statuses
+    const allowed = [
+      "Pending",
+      "Unpaid",
+      "For Confirmation",
+      "Paid",
+      "University Guarantee - Research",
+      "University Guarantee - Medical",
+      "Voided",
+    ];
     if (!allowed.includes(nextStatus)) {
       return res.status(400).json({ message: "Invalid bill status" });
     }

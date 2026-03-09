@@ -1,9 +1,9 @@
-// backend/routes/adminBills.js
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const Bill = require("../models/Bill");
 const Patient = require("../models/Patient"); // ✅ ADD (admins are stored in Patient in your project)
+const Appointment = require("../models/Appointment"); // ✅ ADD (needed for by-appointment status update)
 
 const router = express.Router();
 
@@ -117,6 +117,66 @@ router.get("/", requireAdmin, async (req, res) => {
     return res.json(bills);
   } catch (err) {
     return res.status(500).json({ message: "Fetch bills failed", error: err.message });
+  }
+});
+
+/**
+ * ✅ NEW (FIX): PATCH /api/admin/bills/by-appointment/:appointmentId/status
+ * Body: { status: "<allowed>" }
+ *
+ * This matches the frontend call when billId is missing:
+ * PATCH /api/admin/bills/by-appointment/<apptId>/status
+ */
+router.patch("/by-appointment/:appointmentId/status", requireAdmin, async (req, res) => {
+  try {
+    const appointmentId = String(req.params.appointmentId || "").trim();
+    if (!mongoose.Types.ObjectId.isValid(appointmentId)) {
+      return res.status(400).json({ message: "Invalid appointmentId" });
+    }
+
+    const nextStatus = String(req.body?.status || "").trim();
+    if (!ALLOWED_STATUSES.has(nextStatus)) {
+      return res.status(400).json({ message: "Invalid status value" });
+    }
+
+    // Need patientId when creating a bill (Bill schema requires patientId)
+    const appt = await Appointment.findById(appointmentId)
+      .select("_id patientId procedure")
+      .lean();
+
+    if (!appt) return res.status(404).json({ message: "Appointment not found" });
+
+    const proc = String(appt?.procedure || "").trim();
+
+    const updateOps = {
+      $set: { status: nextStatus },
+      $setOnInsert: {
+        patientId: appt.patientId,
+        appointmentId: appt._id,
+        procedure: proc,
+        billing: { label: proc, amount: 0, currency: "PHP" },
+        totalAmount: 0,
+        currency: "PHP",
+        receiptUrl: "",
+        issuedAt: new Date(),
+      },
+    };
+
+    if (nextStatus === "Paid") {
+      updateOps.$set.paidAt = new Date();
+    } else {
+      updateOps.$unset = { paidAt: "" };
+    }
+
+    const updated = await Bill.findOneAndUpdate(
+      { appointmentId: appt._id },
+      updateOps,
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+    ).lean();
+
+    return res.json(updated);
+  } catch (err) {
+    return res.status(500).json({ message: "Update bill status failed", error: err.message });
   }
 });
 

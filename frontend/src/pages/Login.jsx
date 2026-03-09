@@ -423,16 +423,7 @@ export default function Login() {
               )}
             </div>
 
-            {/* Facebook placeholder */}
-            <button
-              type="button"
-              className="synapse-social-btn"
-              aria-label="Continue with Facebook"
-              disabled={loading || otpSent}
-              onClick={() => setMsg("Facebook login not wired yet.")}
-            >
-              <span className="f">f</span>
-            </button>
+
           </div>
 
           <div className="synapse-bottom">
